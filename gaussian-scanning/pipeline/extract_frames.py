@@ -10,7 +10,7 @@ so it can later be matched to drone sensor logs.
 Photos: copied (resized if larger than --max-size), in name order.
 
 Writes <run>/frames/*.jpg and <run>/frames.csv (file_name, source,
-timestamp_sec, sharpness).
+timestamp_sec, sharpness, width, height).
 """
 import argparse
 import csv
@@ -60,8 +60,9 @@ def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list,
             return
         s, t, frame = best
         name = f"frame_{len(rows):05d}.jpg"
-        cv2.imwrite(str(out / name), fit(frame, max_size), [cv2.IMWRITE_JPEG_QUALITY, 95])
-        rows.append((name, video.name, f"{t:.4f}", f"{s:.1f}"))
+        img = fit(frame, max_size)
+        cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        rows.append((name, video.name, f"{t:.4f}", f"{s:.1f}", img.shape[1], img.shape[0]))
 
     index = 0
     while True:
@@ -107,7 +108,7 @@ def from_images(src: Path, out: Path, max_size: int) -> tuple[list, dict]:
             shutil.copyfile(f, out / name)
         else:
             cv2.imwrite(str(out / name), resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        rows.append((name, str(f.relative_to(src)), "", f"{sharpness(img):.1f}"))
+        rows.append((name, str(f.relative_to(src)), "", f"{sharpness(img):.1f}", resized.shape[1], resized.shape[0]))
         if i % 10 == 0:
             progress(i / len(files), f"{i}/{len(files)} images")
     return rows, {"source_kind": "images", "source_size": size}
@@ -158,12 +159,12 @@ def main() -> None:
 
     with open(paths.frames_csv, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["file_name", "source", "timestamp_sec", "sharpness"])
+        w.writerow(["file_name", "source", "timestamp_sec", "sharpness", "width", "height"])
         w.writerows(rows)
 
-    first = cv2.imread(str(out / rows[0][0]))
+    sizes = sorted({(int(r[4]), int(r[5])) for r in rows})
     progress(1.0, f"kept {len(rows)} frames")
-    result(num_frames=len(rows), frame_size=first.shape[1::-1], **info)
+    result(num_frames=len(rows), frame_size=list(sizes[0]) if len(sizes) == 1 else [list(x) for x in sizes], **info)
 
 
 if __name__ == "__main__":

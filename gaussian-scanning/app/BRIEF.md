@@ -39,9 +39,11 @@ Stage protocol: `python -m pipeline.<stage> --run-dir DIR [--param value...]`, p
 
 ## 4. What exists
 
-- **Backend** (`app/server/`): stage registry, run/capture store, job runner (cancel, resume after crash/restart, rerun from stage, reuse from another run), API, serves the built frontend.
+- **Backend** (`app/server/`): stage registry, run/capture store, job runner, API, serves the built frontend. Runs can be cancelled, resumed, re-run from any stage, or started from another run's frames/poses. Stopping the server stops the running stage and marks it interrupted (resumable); queued runs survive restarts; after a hard crash, a leftover stage process is killed only if its command line still names that run.
 - **Frontend** (`app/frontend/`): runs list, new run (capture, preset, advanced settings, reuse), run detail (live stage progress, logs, metrics, loss curve, frames, downloads, config + environment), captures (upload by drag-drop/folder, import by path), full-screen viewer.
-- **Viewer**: orbit and fly controls, capture trajectory and camera frustums, step through the capture cameras with the source photo alongside (a quick visual check of where the splat is weak), double-click to focus, screenshot, PLY download.
+- **Viewer**: orbit and fly controls; step through the capture cameras with the source photo alongside (a quick visual check of where the splat is weak); an overview from above with the capture path, camera frustums and a ceiling cutaway (a first, visual version of "coverage"); double-click to focus; screenshot; PLY download. "Up" is estimated from the capture cameras' horizontal axes, which stays correct for a drone camera pitched down.
+- **Tests** (`tests/`): API + runner behaviour with a fake stage (cancel, resume, rerun, reuse, shutdown/restart recovery, upload/import validation, file access confined to the run folder) and pipeline units (SPZ/PLY writers, COLMAP reader, up estimation). No GPU needed.
+- **Handled capture quirks**: variable-frame-rate phone video (real timestamps), photo sets mixing portrait and landscape (SfM falls back to per-image cameras), long captures (pinned-memory budget in the trainer).
 
 ## 5. Designed for, not built yet (in rough priority order)
 
@@ -50,13 +52,16 @@ Stage protocol: `python -m pipeline.<stage> --run-dir DIR [--param value...]`, p
 3. **Scenes and comparable evaluation (M8).** Today each run is scored on held-out frames from *its own* capture, which can't compare autonomous vs manual vs lawnmower scans fairly: each would be graded on a different test set. Needed: a *Scene* (one room) with one independent test capture and a reference frame; runs align to the scene and are all rendered from the same test views. Then a comparison screen and a coverage metric (both still to be defined).
 4. Viewer overlays for the above (coverage heatmap, VIO-vs-SfM trajectory difference).
 
-## 6. Test result
+## 6. Test results
 
-Mip-NeRF 360 "room" (311 photos at 779x519, fetched with `scripts/fetch_test_data.py`), Draft preset (7k iterations), every 8th frame held out, RTX 4070 Ti Super:
+All run through the app (import → run → viewer), RTX 4070 Ti Super, every 8th frame held out for scoring. Test data: Mip-NeRF 360 "room" (311 photos at 779x519, via `scripts/fetch_test_data.py`).
 
-- COLMAP (CPU, exhaustive + global mapper): 311/311 frames posed, 0.52 px mean reprojection error, ~4.5 min
-- Training: ~2.8 min, ~585k Gaussians, 1.1 GB peak GPU memory
-- **Held-out PSNR 30.8 dB, SSIM 0.927** (published 3DGS on this scene is ~31-32 dB at 30k iterations)
-- Export: 138 MB PLY, 9.9 MB SPZ
+| Run | Frames posed | SfM (CPU) | Train | Gaussians | Held-out PSNR / SSIM | SPZ / PLY |
+|---|---|---|---|---|---|---|
+| Room photos, Draft (7k) | 311/311, 0.55 px | 4.5 min | 2.8 min | 580k | **30.7 dB / 0.926** | 10 / 138 MB |
+| Room photos, Standard (30k; frames + poses reused from the Draft run) | (reused) | 0 | 18 min | 1.95M | **32.1 dB / 0.945** | 34 / 409 MB |
+| Room as a 31 s video, 4 fps, Draft | 125/125, 0.52 px | 1.2 min | 2.7 min | 517k | **28.8 dB / 0.893** | 9 / 122 MB |
 
-The video path was also checked with a video made from the same photos.
+For reference, published 3DGS results on this scene are ~31–32 dB. The viewer renders the 1.65M-splat export at 60 fps (display-capped). Also exercised on real runs: resume after cancel; server stopped mid-training → stage marked interrupted, no orphaned process → resumed to completion; export re-run in place.
+
+Known limits: COLMAP runs on the CPU (the Nix binary cache has no CUDA build), ~4–5 min per 300 frames; training runs at ~30–50 it/s at this resolution, so a Standard run at full 1600 px will take longer.

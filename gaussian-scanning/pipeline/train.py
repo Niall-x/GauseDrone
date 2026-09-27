@@ -56,10 +56,14 @@ def knn_mean_dist(points: torch.Tensor, k: int = 3, chunk: int = 4096) -> torch.
     return out
 
 
+PIN_BUDGET_BYTES = 2 << 30  # page-locked host memory for faster uploads; beyond this, plain memory
+
+
 class Frames:
     """Training images kept as uint8 on the CPU, moved to the GPU one at a time."""
 
     def __init__(self, image_dir: Path, cameras, images):
+        pinned = 0
         self.names, self.viewmats, self.Ks, self.pixels = [], [], [], []
         for im in images:
             cam = cameras[im.camera_id]
@@ -71,7 +75,11 @@ class Frames:
             self.names.append(im.name)
             self.viewmats.append(torch.tensor(im.world_to_cam, dtype=torch.float32))
             self.Ks.append(torch.tensor(cam.K, dtype=torch.float32))
-            self.pixels.append(torch.from_numpy(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)).pin_memory())
+            pixels = torch.from_numpy(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+            if pinned + pixels.nbytes <= PIN_BUDGET_BYTES:
+                pixels = pixels.pin_memory()
+                pinned += pixels.nbytes
+            self.pixels.append(pixels)
 
     def __len__(self):
         return len(self.names)
@@ -116,6 +124,9 @@ def main() -> None:
     cameras, images, (xyz, rgb, _) = read_model(paths.sparse_txt)
     if len(xyz) == 0:
         raise SystemExit("sparse model has no points to initialise from")
+    # gsplat compiles its CUDA kernels on first use (cached afterwards).
+    progress(0.0, "loading gsplat CUDA kernels (the very first run compiles them, ~2 min)")
+    from gsplat.cuda._backend import _C  # noqa: F401
     progress(0.0, f"loading {len(images)} frames")
     frames = Frames(paths.undistorted / "images", cameras, images)
     all_ids = list(range(len(frames)))

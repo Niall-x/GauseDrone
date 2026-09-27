@@ -438,6 +438,8 @@ export interface components {
             error: string | null;
             /** Reused From */
             reused_from: string | null;
+            /** Pid */
+            pid: number | null;
         };
         /** UpdateRequest */
         UpdateRequest: {

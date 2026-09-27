@@ -1185,6 +1185,17 @@
               }
             ],
             "title": "Reused From"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
           }
         },
         "type": "object",
@@ -1197,7 +1208,8 @@
           "finished",
           "result",
           "error",
-          "reused_from"
+          "reused_from",
+          "pid"
         ],
         "title": "StageState"
       },

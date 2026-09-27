@@ -30,6 +30,16 @@ Then: **Captures** → upload a video/photos or import a path on this machine �
 **Run** → pick *Draft* (7k iterations, a few minutes) or *Standard* (30k) →
 **Open viewer** when it finishes.
 
+The viewer: drag to orbit (double-click a surface to orbit around it), or
+switch to fly mode (WASD, Q/E down/up). **[ ]** step through the capture's
+cameras, optionally showing the source photo alongside the render (a quick way
+to see where the splat is weak). **O** gives an overview from above with the
+capture path, camera frustums and a ceiling cutaway, for judging coverage.
+
+Stopping the server (Ctrl-C) stops the running stage; that run shows as
+interrupted and **Resume** continues from the stage that was cut off. Queued
+runs stay queued across restarts.
+
 Using a GPU machine remotely: run `splat-app` there and tunnel,
 `ssh -L 8000:127.0.0.1:8000 gpu-box`, then open http://127.0.0.1:8000
 locally. There is no login, so don't bind it to a public interface.
@@ -42,6 +52,12 @@ python scripts/fetch_test_data.py          # Mip-NeRF 360 "room", 311 photos (~7
 
 Import `data/test/mipnerf360_room/images` on the Captures page. A Draft run
 with "Hold out every Nth frame" = 8 should give roughly 30–31 dB PSNR.
+
+## Tests
+
+```sh
+python -m pytest tests     # ~5 s; no GPU or COLMAP needed (the runner tests use a fake stage)
+```
 
 ## Pipeline without the app
 

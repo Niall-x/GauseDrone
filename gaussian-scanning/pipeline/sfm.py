@@ -12,6 +12,7 @@ Outputs <run>/sfm/undistorted/{images,sparse} (pinhole images for training)
 and <run>/sfm/sparse_txt (the same model as text).
 """
 import argparse
+import csv
 import re
 import struct
 import subprocess
@@ -95,6 +96,16 @@ def main() -> None:
     if n_frames == 0:
         raise SystemExit(f"no frames in {images}; run the frames stage first")
 
+    single_camera = args.single_camera
+    if single_camera and paths.frames_csv.exists():
+        with open(paths.frames_csv) as fh:
+            sizes = {(r.get("width"), r.get("height")) for r in csv.DictReader(fh)}
+        if len(sizes) > 1:
+            # e.g. a photo set mixing portrait and landscape shots: one shared
+            # camera can't have two image sizes.
+            print(f"frames have {len(sizes)} different sizes; using one camera per image instead of a shared one")
+            single_camera = 0
+
     sfm = fresh_dir(paths.sfm)
     db = sfm / "database.db"
     sparse = sfm / "sparse"
@@ -108,7 +119,7 @@ def main() -> None:
             "--database_path", str(db),
             "--image_path", str(images),
             "--ImageReader.camera_model", args.camera_model,
-            "--ImageReader.single_camera", str(args.single_camera),
+            "--ImageReader.single_camera", str(single_camera),
             "--FeatureExtraction.use_gpu", gpu,
         ],
         (0.0, 0.25), "extracting features", n_frames,
