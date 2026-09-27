@@ -30,6 +30,7 @@ class Runner:
         self.current: str | None = None
         self.proc: subprocess.Popen | None = None
         self.cancel_requested = False
+        self.shutting_down = False
         self._recover()
         self.thread = threading.Thread(target=self._loop, name="runner", daemon=True)
         self.thread.start()
@@ -61,16 +62,22 @@ class Runner:
             self.cancel_requested = True
             proc = self.proc
         if proc and proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            _kill_group(proc.pid)
         return True
 
     # --- internals ---
+
+    def shutdown(self) -> None:
+        """Stop the running stage when the server exits; the run is then resumable."""
+        with self.cond:
+            current, proc = self.current, self.proc
+            self.shutting_down = True
+            self.cancel_requested = True  # stop the worker starting the next stage
+            self.cond.notify_all()
+        if current and proc and proc.poll() is None:
+            _kill_group(proc.pid)
+            proc.wait(timeout=10)
+        self.thread.join(timeout=10)  # let it record the stage as interrupted
 
     def _recover(self) -> None:
         """After a restart: re-queue queued runs, mark interrupted ones failed (resumable)."""
@@ -78,6 +85,12 @@ class Runner:
             if run.status == "queued":
                 self.queue.append(run.id)
             elif run.status == "running":
+                for s in run.stages:
+                    # An orphaned stage from a crashed server would clash with a resume.
+                    # Check the pid still belongs to this run: pids are reused after a reboot.
+                    if s.status == "running" and s.pid and _is_stage_of(s.pid, self.store.run_dir(run.id)):
+                        _kill_group(s.pid)
+
                 def interrupted(r: Run):
                     r.status = "failed"
                     for s in r.stages:
@@ -88,8 +101,10 @@ class Runner:
     def _loop(self) -> None:
         while True:
             with self.cond:
-                while not self.queue:
+                while not self.queue and not self.shutting_down:
                     self.cond.wait()
+                if self.shutting_down:
+                    return  # leave queued runs queued; they resume on the next start
                 self.current = self.queue.popleft()
                 self.cancel_requested = False
             try:
@@ -112,7 +127,7 @@ class Runner:
                 continue
             ok = not self.cancel_requested and self._run_stage(run, stage_state.name)
             if not ok:
-                status = "cancelled" if self.cancel_requested else "failed"
+                status = "cancelled" if self.cancel_requested and not self.shutting_down else "failed"
                 self.store.update_run(run_id, lambda r: setattr(r, "status", status))
                 return
         self.store.update_run(run_id, lambda r: setattr(r, "status", "done"))
@@ -150,6 +165,12 @@ class Runner:
             )
             with self.cond:
                 self.proc = proc
+                # A cancel that arrived between marking the stage running and
+                # this point found no process to kill; honour it now.
+                cancelled_early = self.cancel_requested
+            if cancelled_early:
+                _kill_group(proc.pid, timeout=0)
+            self.store.update_run(run.id, lambda r: setattr(r.stage(stage_name), "pid", proc.pid))
             last_persist = 0.0
             for line in proc.stdout:
                 if line.startswith("@@progress "):
@@ -172,12 +193,15 @@ class Runner:
             code = proc.wait()
 
         cancelled = self.cancel_requested
+        interrupted = self.shutting_down
 
         def finish(r: Run):
             s = r.stage(stage_name)
-            s.finished = now()
+            s.finished, s.pid = now(), None
             if code == 0:
                 s.status, s.progress = "done", 1.0
+            elif interrupted:
+                s.status, s.error = "failed", "interrupted: the server stopped mid-stage"
             elif cancelled:
                 s.status, s.error = "cancelled", "cancelled by user"
             else:
@@ -185,3 +209,30 @@ class Runner:
                 s.error = "\n".join(list(tail)[-12:]) or f"exited with code {code}"
         self.store.update_run(run.id, finish)
         return code == 0
+
+
+def _is_stage_of(pid: int, run_dir: Path) -> bool:
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return str(run_dir).encode() in cmdline
+
+
+def _kill_group(pgid: int, timeout: float = 10.0) -> None:
+    """SIGTERM a stage's process group (the stage and e.g. its COLMAP child), then SIGKILL if needed."""
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass

@@ -46,6 +46,7 @@ class StageState(BaseModel):
     result: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     reused_from: str | None = None  # run id whose outputs this stage reused
+    pid: int | None = None  # process (group) id while running, so a restarted server can clean up
 
 
 class Run(BaseModel):

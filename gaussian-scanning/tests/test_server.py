@@ -175,3 +175,23 @@ def test_upload_capture(client):
     bad = client.post("/api/captures/upload", data={"name": "junk"}, files=[("files", ("notes.txt", b"hi", "text/plain"))])
     assert bad.status_code == 400
     assert len(client.get("/api/captures").json()) == 1  # the rejected upload left nothing behind
+
+
+def test_shutdown_interrupts_and_restart_recovers(client, capture):
+    first = client.post("/api/runs", json={"capture_id": capture["id"], "config": {"a": {"sleep": 30}}}).json()
+    second = client.post("/api/runs", json={"capture_id": capture["id"]}).json()
+    for _ in range(100):
+        if client.get(f"/api/runs/{first['id']}").json()["stages"][0]["status"] == "running":
+            break
+        time.sleep(0.05)
+    t0 = time.time()
+    client.__exit__(None, None, None)  # server shutdown: must stop the stage, not wait 30 s
+    assert time.time() - t0 < 10
+
+    with TestClient(main.app) as c2:  # restart on the same data dir
+        r1 = c2.get(f"/api/runs/{first['id']}").json()
+        assert r1["status"] == "failed" and "interrupted" in r1["stages"][0]["error"]
+        assert r1["stages"][0]["pid"] is None
+        assert wait(c2, second["id"])["status"] == "done"  # the queued run survived the restart
+        assert c2.post(f"/api/runs/{first['id']}/resume").status_code == 200
+        c2.post("/api/runs/{}/cancel".format(first["id"]))  # (stage a sleeps 30 s; no need to wait)

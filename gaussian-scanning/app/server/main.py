@@ -72,6 +72,7 @@ async def lifespan(_: FastAPI):
     runner = Runner(store)
     ENV = environment_info()
     yield
+    runner.shutdown()
 
 
 app = FastAPI(title="GauseDrone Splat App", version="0.1.0", lifespan=lifespan)
@@ -241,7 +242,7 @@ def create_run(req: CreateRunRequest) -> Run:
         capture_id=capture.id,
         config=config,
         stages=[StageState(name=s.name) for s in stages.STAGES],
-        env=ENV,
+        env=environment_info(),
         base_run_id=req.base_run_id,
     )
 
@@ -319,10 +320,12 @@ def rerun(run_id: str, req: RerunRequest) -> Run:
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    env = environment_info()
+
     def reset(r: Run):
         r.config = config
         r.status = "queued"
-        r.env = ENV
+        r.env = env
         for i in range(start, len(r.stages)):
             r.stages[i] = StageState(name=r.stages[i].name)
     store.update_run(run_id, reset)
