@@ -68,6 +68,7 @@ Key decisions:
 - **Two cameras:** a depth/ToF camera for SLAM, mapping and avoidance; a separate fast-shutter camera for splat images (motion blur is the main enemy).
 - **Everything is replayable.** Rosbags let us rerun SLAM, planning and reconstruction without flying.
 - **Simulation first:** ArduPilot SITL + Gazebo + the same ROS 2 nodes.
+- **VIO feeds two consumers differently.** Real-time pose goes to ArduPilot's EKF3 over MAVLink purely to hold position/attitude in flight. The capture node logs VIO's pose directly on the companion computer (not round-tripped through the FC) for splat reconstruction — avoids MAVLink latency, EKF3 filtering/mixing, and rate quantization contaminating the training data.
 
 ## 5. Work split
 
@@ -95,6 +96,8 @@ Stream B needs no drone to start (handheld and simulated scans). Stream C starts
 
 If we stop after M6, we still have a complete result.
 
+M1's detailed plan lives in `gausian scanning/BRIEF.md`; the management app being scoped to run that pipeline is in `gausian scanning/app/BRIEF.md`.
+
 ## 7. Risks
 
 | Risk | Mitigation |
@@ -105,6 +108,9 @@ If we stop after M6, we still have a complete result.
 | Companion computer too slow | Pi 5 or Jetson; offload heavy processing to the ground station over Wi-Fi if needed |
 | Crashes and cost | Simulation first, prop guards, net, kill switch, spare parts budget |
 | Scope creep | Fixed scope: one room; M6 is the "done" line |
+| VIO pose uses wrong frame convention (ROS ENU vs MAVLink/ArduPilot NED) or an uncalibrated sensor-to-IMU offset | Explicit, tested frame conversion in the MAVLink bridge; measure and configure the extrinsic offset before first flight |
+| Companion computer can't sustain real-time VIO at low, *consistent* latency (jitter breaks EKF3 fusion more than average delay does) | Benchmark VIO throughput/jitter on the actual hardware at M3/M4, before relying on it; fall back to Jetson if the Pi can't hold a steady rate |
+| FC and companion computer clocks drift apart, misdating vision measurements fed to EKF3 | Use MAVLink timesync (or equivalent) and verify on the bench before trusting external nav in flight |
 
 Outdoor tests with a camera drone over 100g need a CAA Operator ID. Check current rules before any outdoor flight.
 

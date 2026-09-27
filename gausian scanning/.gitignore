@@ -1,0 +1,7 @@
+data/
+*.mp4
+*.mov
+*.MP4
+*.MOV
+__pycache__/
+*.pyc
