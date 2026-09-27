@@ -51,9 +51,9 @@ flowchart LR
 
   subgraph Ground["Ground station / desktop GPU"]
     SFM["Pose refinement<br/>(COLMAP, poses as prior)"]
-    TRAIN["Splat training<br/>(nerfstudio / gsplat)"]
+    TRAIN["Splat training<br/>(gsplat)"]
     EVAL["Evaluation<br/>(PSNR / SSIM / LPIPS, coverage)"]
-    VIEW["Web viewer + scan UI"]
+    VIEW["Splat Lab app<br/>(run pipeline + web viewer)"]
   end
 
   BAG -- "after flight" --> SFM --> TRAIN --> EVAL
@@ -96,7 +96,7 @@ Stream B needs no drone to start (handheld and simulated scans). Stream C starts
 
 If we stop after M6, we still have a complete result.
 
-M1's detailed plan lives in `gausian scanning/BRIEF.md`; the management app being scoped to run that pipeline is in `gausian scanning/app/BRIEF.md`.
+M1's detailed plan lives in `gaussian-scanning/BRIEF.md`; the app that runs that pipeline and views the results (Splat Lab, built) is in `gaussian-scanning/app/BRIEF.md`.
 
 ## 7. Risks
 
@@ -124,7 +124,7 @@ Flight controller (we have ArduPilot experience), frame, motors and ESCs, batter
 2. **Which SLAM/VIO stack?** Pick after checking which runs well on the chosen hardware.
 3. **Depth camera:** which one, given weight and ROS 2 driver support?
 4. **Splat camera:** action-cam module, Pi HQ camera or something else? Rolling vs global shutter?
-5. **Splat framework:** nerfstudio vs standalone gsplat? What GPU do we have for training?
+5. ~~**Splat framework:** nerfstudio vs standalone gsplat? What GPU do we have for training?~~ **Decided:** COLMAP 4 + gsplat directly; trains on an RTX 4070 Ti Super (16 GB). See `gaussian-scanning/BRIEF.md`.
 6. **Test space:** where can we legally and safely fly indoors, and how big is it?
 7. **Time and budget:** how many hours per week each, what deadline, and what can we spend?
 8. **Is the friend's stream big enough?** Should the viewer/UI include anything more interesting, such as an annotated scan, before/after comparison or coverage heatmap?

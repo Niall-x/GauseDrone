@@ -1,0 +1,31 @@
+[project]
+name = "gausedrone-splat"
+version = "0.1.0"
+description = "Capture -> COLMAP -> gsplat pipeline and the local web app that runs it"
+requires-python = "==3.12.*"
+dependencies = [
+    "torch==2.13.0",
+    "gsplat==1.5.3",
+    "numpy",
+    "opencv-python-headless",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+]
+
+[dependency-groups]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true

@@ -1,0 +1,10 @@
+data/
+.venv/
+__pycache__/
+*.pyc
+*.tmp
+result
+*.mp4
+*.mov
+*.MP4
+*.MOV

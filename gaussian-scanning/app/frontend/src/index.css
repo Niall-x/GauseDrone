@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Dark-first palette: splats read best on a dark surround. */
+@theme {
+  --color-bg: #0b0d10;
+  --color-panel: #12151a;
+  --color-panel-2: #181c22;
+  --color-line: #242a33;
+  --color-line-strong: #323a46;
+  --color-fg: #e6e9ee;
+  --color-muted: #8b95a3;
+  --color-faint: #5d6673;
+  --color-accent: #7dd3fc;
+  --color-accent-strong: #38bdf8;
+  --color-ok: #4ade80;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}

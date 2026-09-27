@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Splat Lab launcher.
+#
+#   splat-app            build the frontend if needed, serve everything on http://127.0.0.1:8000
+#   splat-app dev        API with auto-reload on :8000 + Vite dev server on :5173 (use this URL)
+#   splat-app build      (re)build the frontend
+#   splat-app gen-api    regenerate the frontend's API types from the backend models
+#
+# Options for serve/dev: --host HOST (default 127.0.0.1), --port PORT (default 8000).
+# There is no login, so only bind beyond localhost on a trusted network; to use a
+# remote GPU machine, prefer an SSH tunnel: ssh -L 8000:127.0.0.1:8000 gpu-box
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FRONTEND="$ROOT/app/frontend"
+
+# Everything needs the dev shell (COLMAP, CUDA toolchain, venv). Enter it if we're not in it.
+if [[ -z "${CUDA_HOME:-}" || -z "${VIRTUAL_ENV:-}" ]]; then
+  exec nix develop "$ROOT" --command "$0" "$@"
+fi
+
+cmd="${1:-serve}"
+[[ $# -gt 0 ]] && shift
+HOST=127.0.0.1
+PORT=8000
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host) HOST="$2"; shift 2 ;;
+    --port) PORT="$2"; shift 2 ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+done
+
+ensure_node_modules() {
+  [[ -d "$FRONTEND/node_modules" ]] || (cd "$FRONTEND" && npm ci)
+}
+
+build() {
+  ensure_node_modules
+  (cd "$FRONTEND" && npm run build)
+}
+
+needs_build() {
+  [[ ! -f "$FRONTEND/dist/index.html" ]] && return 0
+  [[ -n "$(find "$FRONTEND/src" "$FRONTEND/index.html" -newer "$FRONTEND/dist/index.html" -print -quit)" ]]
+}
+
+cd "$ROOT"
+case "$cmd" in
+  serve)
+    needs_build && build
+    echo "Splat Lab: http://$HOST:$PORT"
+    exec uvicorn app.server.main:app --host "$HOST" --port "$PORT"
+    ;;
+  dev)
+    ensure_node_modules
+    trap 'kill 0' EXIT
+    uvicorn app.server.main:app --host "$HOST" --port "$PORT" --reload --reload-dir app/server --reload-dir pipeline &
+    (cd "$FRONTEND" && npx vite --host "$HOST") &
+    wait
+    ;;
+  build) build ;;
+  gen-api)
+    python scripts/dump_openapi.py
+    (cd "$FRONTEND" && npm run gen:api)
+    ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
+esac
