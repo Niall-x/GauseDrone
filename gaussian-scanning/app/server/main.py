@@ -141,7 +141,12 @@ def upload_capture(name: str = Form(...), files: list[UploadFile] = File(...)) -
     src.mkdir(parents=True)
     try:
         for f in files:
-            target = src / Path(f.filename or "file").name
+            # Folder uploads are flattened; camera dumps often repeat names across
+            # subfolders (DCIM/100/IMG_0001, DCIM/101/IMG_0001), so never overwrite.
+            fname = Path(f.filename or "file")
+            target, i = src / fname.name, 2
+            while target.exists():
+                target, i = src / f"{fname.stem}_{i}{fname.suffix}", i + 1
             with open(target, "wb") as out:
                 shutil.copyfileobj(f.file, out, 1 << 20)
         return store.finalize_capture(capture_id, name, origin="upload", linked=False)

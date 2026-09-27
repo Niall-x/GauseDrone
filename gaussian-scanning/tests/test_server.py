@@ -195,3 +195,10 @@ def test_shutdown_interrupts_and_restart_recovers(client, capture):
         assert wait(c2, second["id"])["status"] == "done"  # the queued run survived the restart
         assert c2.post(f"/api/runs/{first['id']}/resume").status_code == 200
         c2.post("/api/runs/{}/cancel".format(first["id"]))  # (stage a sleeps 30 s; no need to wait)
+
+
+def test_upload_keeps_duplicate_names(client):
+    ok, jpg = cv2.imencode(".jpg", np.full((30, 50, 3), 128, np.uint8))
+    files = [("files", (name, jpg.tobytes(), "image/jpeg")) for name in ("DCIM/100/IMG_0001.jpg", "DCIM/101/IMG_0001.jpg")]
+    cap = client.post("/api/captures/upload", data={"name": "dup"}, files=files).json()
+    assert cap["num_images"] == 2 and sorted(cap["files"]) == ["IMG_0001.jpg", "IMG_0001_2.jpg"]
