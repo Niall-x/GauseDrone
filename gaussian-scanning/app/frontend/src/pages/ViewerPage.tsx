@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Move3d, Orbit, Route, Video } from "lucide-react";
+import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Map as MapIcon, Move3d, Orbit, Route, Scissors, Video } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api/client";
@@ -17,11 +17,12 @@ export function ViewerPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stats, setStats] = useState<ViewerStats | null>(null);
   const [mode, setMode] = useState<ControlMode>("orbit");
-  const [showTrajectory, setShowTrajectory] = useState(true);
+  const [showTrajectory, setShowTrajectory] = useState(false);
   const [showFrustums, setShowFrustums] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [camIndex, setCamIndex] = useState<number | null>(null);
+  const [cutaway, setCutaway] = useState<number | null>(null);
   const viewer = useRef<SplatViewerHandle>(null);
 
   useEffect(() => {
@@ -48,6 +49,11 @@ export function ViewerPage() {
       else if (e.key === "r" && mode === "orbit") {
         setCamIndex(null);
         viewer.current?.resetView();
+      } else if (e.key === "o" && mode === "orbit") {
+        setCamIndex(null);
+        setShowTrajectory(true);
+        setCutaway((c) => c ?? 0.6);
+        viewer.current?.overview();
       } else if (e.key === "?") setShowHelp((v) => !v);
     };
     window.addEventListener("keydown", onKey);
@@ -77,6 +83,7 @@ export function ViewerPage() {
           mode={mode}
           showTrajectory={showTrajectory}
           showFrustums={showFrustums}
+          cutaway={cutaway}
           onProgress={setProgress}
           onLoaded={() => setLoaded(true)}
           onError={setLoadError}
@@ -114,10 +121,25 @@ export function ViewerPage() {
           <ToolButton active={showFrustums} onClick={() => setShowFrustums((v) => !v)} title="Camera frustums">
             <Video className="size-4" />
           </ToolButton>
+          <ToolButton active={cutaway != null} onClick={() => setCutaway((c) => (c == null ? 0.6 : null))} title="Cutaway: hide the ceiling and upper walls to see into the room from above">
+            <Scissors className="size-4" />
+          </ToolButton>
           <ToolButton active={showPhoto} onClick={() => setShowPhoto((v) => !v)} title="Show the source photo when snapped to a capture camera">
             <ImageIcon className="size-4" />
           </ToolButton>
           <Divider />
+          <ToolButton
+            onClick={() => {
+              setCamIndex(null);
+              setMode("orbit");
+              setShowTrajectory(true);
+              setCutaway((c) => c ?? 0.6);
+              viewer.current?.overview();
+            }}
+            title="Overview: whole scene from above, with the capture path (O)"
+          >
+            <MapIcon className="size-4" />
+          </ToolButton>
           <ToolButton onClick={() => { setCamIndex(null); viewer.current?.resetView(); }} title="Reset view (R)">
             <Home className="size-4" />
           </ToolButton>
@@ -132,6 +154,24 @@ export function ViewerPage() {
           </ToolButton>
         </div>
       </div>
+
+      {cutaway != null && (
+        <div className="absolute right-3 top-16 flex items-center gap-3 rounded-lg border border-line bg-panel/85 px-3 py-2 text-xs text-muted backdrop-blur">
+          <Scissors className="size-3.5" />
+          <span>Cut height</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={cutaway}
+            onChange={(e) => setCutaway(Number(e.target.value))}
+            className="w-40 accent-[var(--color-accent)]"
+            aria-label="Cutaway height"
+          />
+          <span className="w-8 text-right font-mono">{Math.round(cutaway * 100)}%</span>
+        </div>
+      )}
 
       {/* loading */}
       {!loaded && !error && (
@@ -185,11 +225,12 @@ export function ViewerPage() {
       )}
 
       {showHelp && (
-        <div className="absolute right-3 top-16 w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
+        <div className="absolute right-3 top-28 w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
           <h3 className="mb-2 text-sm font-semibold text-fg">Controls</h3>
           <HelpRow k="Orbit">drag rotate · right-drag pan · scroll zoom · double-click a surface to orbit it</HelpRow>
           <HelpRow k="Fly">W A S D / arrows move · Q E down/up · drag look · Shift faster</HelpRow>
           <HelpRow k="[ ]">step through the capture cameras</HelpRow>
+          <HelpRow k="O">overview from above, with the capture path and a cutaway</HelpRow>
           <HelpRow k="R">reset view</HelpRow>
           <p className="mt-3 text-faint">"Up" is estimated from the capture cameras, so a scan filmed mostly tilted may appear slightly skewed.</p>
         </div>

@@ -17,7 +17,7 @@ dependencies = [
 dev = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
-filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning"]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
 
 [tool.uv]
 package = false

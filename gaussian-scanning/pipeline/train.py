@@ -232,7 +232,7 @@ def main() -> None:
         "num_gaussians": len(splats["means"]),
         "train_seconds": round(train_seconds, 1),
         "peak_gpu_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2),
-        "scene_scale": scene_scale,
+        "scene_scale": round(scene_scale, 4),
         "held_out_frames": [frames.names[i] for i in test_ids],
         "loss_curve": loss_log,
         **metrics,

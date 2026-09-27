@@ -82,25 +82,47 @@ def write_spz(path: Path, s: dict[str, np.ndarray], sh_degree: int) -> None:
             fh.write(p)
 
 
+def estimate_up(c2w: np.ndarray) -> np.ndarray:
+    """World "up" in COLMAP coordinates, assuming the camera was kept roughly level (no roll).
+
+    OpenCV cameras have +x right, +y down. With no roll, every camera's x axis
+    is horizontal whatever its pitch, so up is the direction perpendicular to
+    all of them: the least-significant singular vector of the stacked x axes.
+    This stays correct for a drone camera pitched down on a one-way flight,
+    where simply averaging the cameras' -y axes would tilt the result by the
+    pitch angle. Falls back to that average if the camera never turned (all x
+    axes parallel, so they don't pin down a plane).
+    """
+    mean_up = -c2w[:, :3, 1].mean(0)
+    mean_up /= np.linalg.norm(mean_up)
+    x_axes = c2w[:, :3, 0]
+    _, s, vt = np.linalg.svd(x_axes, full_matrices=False)
+    if len(x_axes) < 3 or s[1] < 0.1 * s[0]:
+        return mean_up
+    up = vt[-1]
+    return up if up @ mean_up >= 0 else -up
+
+
 def view_info(model_dir: Path) -> dict:
     cameras, images, (xyz, _, _) = read_model(model_dir)
     c2w = np.stack([im.cam_to_world for im in images])
     centers = c2w[:, :3, 3]
-    # OpenCV cameras look down +z with +y pointing down the image, so the
-    # average of -y over all frames is a good guess at world "up" for a
-    # handheld or drone capture (cameras are rarely held upside down).
-    up = -c2w[:, :3, 1].mean(0)
-    up /= np.linalg.norm(up)
+    up = estimate_up(c2w)
     cam0 = images[0]
     K = cameras[cam0.camera_id].K
     fov_y = 2 * np.degrees(np.arctan(cameras[cam0.camera_id].height / (2 * K[1, 1])))
     # Robust bounds of the sparse cloud: ignore the far 2% of points (sky, outliers).
     lo, hi = (np.percentile(xyz, [2, 98], axis=0) if len(xyz) else (centers.min(0), centers.max(0)))
+    # Floor-to-ceiling extent along "up", relative to the camera centroid
+    # (what the viewer's cutaway slider spans).
+    heights = (xyz - centers.mean(0)) @ up if len(xyz) else (centers - centers.mean(0)) @ up
+    h_lo, h_hi = np.percentile(heights, [1, 99])
     return {
         "frame": "colmap",
         "up": up.round(6).tolist(),
         "center": centers.mean(0).round(6).tolist(),
         "bounds": [lo.round(4).tolist(), hi.round(4).tolist()],
+        "height_range": [round(float(h_lo), 4), round(float(h_hi), 4)],
         "fov_y_deg": round(float(fov_y), 2),
         "cameras": [
             {

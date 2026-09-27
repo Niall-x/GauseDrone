@@ -2,7 +2,7 @@
 // than embedded, so it can grow drone-specific overlays: the capture
 // trajectory and camera frustums are drawn today; coverage heatmaps or a VIO
 // vs SfM trajectory comparison slot in the same way later.
-import { SparkControls, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+import { SparkControls, SparkRenderer, SplatEdit, SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -18,6 +18,8 @@ export interface ViewInfo {
   up: [number, number, number];
   center: [number, number, number];
   bounds: [[number, number, number], [number, number, number]];
+  /** Extent of the sparse points along "up", relative to `center` (older exports lack it). */
+  height_range?: [number, number];
   fov_y_deg: number;
   cameras: ViewCamera[];
 }
@@ -32,6 +34,7 @@ export interface ViewerStats {
 export interface SplatViewerHandle {
   goToCamera(index: number): void;
   resetView(): void;
+  overview(): void;
   screenshot(): Promise<Blob | null>;
 }
 
@@ -41,6 +44,8 @@ interface Props {
   mode: ControlMode;
   showTrajectory: boolean;
   showFrustums: boolean;
+  /** Hide everything above this fraction of the scene's height (null = off), to see into a room from above. */
+  cutaway: number | null;
   onProgress?: (fraction: number | null) => void;
   onLoaded?: () => void;
   onError?: (message: string) => void;
@@ -53,11 +58,14 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
   const containerRef = useRef<HTMLDivElement>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
-  const api = useRef<SplatViewerHandle & { setMode(m: ControlMode): void; setOverlays(t: boolean, f: boolean): void }>(null);
+  const api = useRef<
+    SplatViewerHandle & { setMode(m: ControlMode): void; setOverlays(t: boolean, f: boolean): void; setCutaway(f: number | null): void }
+  >(null);
 
   useImperativeHandle(ref, () => ({
     goToCamera: (i) => api.current?.goToCamera(i),
     resetView: () => api.current?.resetView(),
+    overview: () => api.current?.overview(),
     screenshot: () => api.current?.screenshot() ?? Promise.resolve(null),
   }));
 
@@ -101,6 +109,22 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
         propsRef.current.onLoaded?.();
       })
       .catch((e: unknown) => propsRef.current.onError?.(String(e)));
+
+    // Cutaway: a plane edit whose local +z points down; splats on its far
+    // side (above it) get opacity 0. Parked far overhead when off.
+    const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+      new THREE.Vector3(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z).applyMatrix4(world.matrixWorld),
+    );
+    const [yMin, yMax] = view.height_range ?? [Math.min(...corners.map((c) => c.y)), Math.max(...corners.map((c) => c.y))];
+    const cutEdit = new SplatEdit({ softEdge: extent * 0.01 });
+    const cutPlane = new SplatEditSdf({ type: SplatEditSdfType.PLANE, opacity: 0 });
+    cutPlane.rotation.x = Math.PI / 2;
+    cutEdit.addSdf(cutPlane);
+    cutEdit.add(cutPlane);
+    scene.add(cutEdit);
+    const setCutaway = (f: number | null) => {
+      cutPlane.position.y = f == null ? 1e9 : yMin + f * (yMax - yMin);
+    };
 
     // --- trajectory + frustum overlays (in COLMAP coordinates, inside `world`) ---
     const positions = view.cameras.map((c) => v3(c.position));
@@ -182,13 +206,31 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       const fwd = dirToWorld(v3(c.forward));
       camera.position.copy(pos);
       camera.up.copy(dirToWorld(v3(c.up)));
-      const focus = Math.max(pos.length(), extent * 0.1); // distance to the scene centre
+      // Orbit around the point on the view ray nearest the scene centre (the
+      // world origin): for a room filmed from inside that is close to the
+      // camera, so orbiting looks around the room instead of swinging the
+      // camera through a wall; for an object orbit it lands on the object.
+      const focus = Math.max(-pos.dot(fwd), extent * 0.05);
       orbit.target.copy(pos).addScaledVector(fwd, focus);
       camera.lookAt(orbit.target);
       camera.up.set(0, 1, 0);
       if (mode === "orbit") orbit.update();
       highlight.position.copy(v3(c.position));
       highlight.visible = true;
+    };
+
+    // Bird's-eye view from above and outside the capture, for judging coverage.
+    const overview = () => {
+      const size = hi.clone().sub(lo).applyQuaternion(world.quaternion);
+      const radius = 0.5 * Math.hypot(size.x, size.z);
+      const dist = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.9;
+      if (mode !== "orbit") applyMode("orbit");
+      orbit.target.set(0, 0, 0);
+      camera.up.set(0, 1, 0);
+      camera.position.set(0, dist * 0.8, dist * 0.6);
+      camera.lookAt(orbit.target);
+      orbit.update();
+      highlight.visible = false;
     };
 
     const resetView = () => {
@@ -221,13 +263,16 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     api.current = {
       goToCamera,
       resetView,
+      overview,
       screenshot,
       setMode: applyMode,
       setOverlays: (t, f) => {
         trajectory.visible = t;
         frustums.visible = f;
       },
+      setCutaway,
     };
+    setCutaway(propsRef.current.cutaway);
     api.current.setOverlays(propsRef.current.showTrajectory, propsRef.current.showFrustums);
     applyMode(mode);
     resetView();
@@ -279,6 +324,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
 
   useEffect(() => api.current?.setMode(props.mode), [props.mode]);
   useEffect(() => api.current?.setOverlays(props.showTrajectory, props.showFrustums), [props.showTrajectory, props.showFrustums]);
+  useEffect(() => api.current?.setCutaway(props.cutaway), [props.cutaway]);
 
   return <div ref={containerRef} className="absolute inset-0" />;
 });

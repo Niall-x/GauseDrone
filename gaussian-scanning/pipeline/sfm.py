@@ -25,6 +25,16 @@ from pipeline.common import RunPaths, fresh_dir, progress, result
 
 PROGRESS_RE = re.compile(r"\[(\d+)/(\d+)(?:, (\d+)/(\d+))?\]")
 REGISTER_RE = re.compile(r"Registering image #\d+ \((\d+)\)")
+# The global mapper prints no counters; map its phases onto rough fractions
+# (measured on a ~300-frame room: positioning and bundle adjustment dominate).
+GLOBAL_MAPPER_PHASES = [
+    (re.compile(r"Decomposing relative poses"), lambda m: 0.05),
+    (re.compile(r"Rotation averaging done"), lambda m: 0.15),
+    (re.compile(r"Track establishment done"), lambda m: 0.2),
+    (re.compile(r"Global positioning done"), lambda m: 0.4),
+    (re.compile(r"Global bundle adjustment iteration (\d+) / (\d+) finished"), lambda m: 0.4 + 0.45 * int(m[1]) / int(m[2])),
+    (re.compile(r"[Rr]etriangulat"), lambda m: 0.9),
+]
 
 
 def colmap(args: list[str], span: tuple[float, float], label: str, total_images: int) -> None:
@@ -45,6 +55,11 @@ def colmap(args: list[str], span: tuple[float, float], label: str, total_images:
             frac = i / n if n else None
         elif m := REGISTER_RE.search(line):
             frac = int(m[1]) / total_images
+        else:
+            for pattern, to_frac in GLOBAL_MAPPER_PHASES:
+                if m := pattern.search(line):
+                    frac = to_frac(m)
+                    break
         if frac is not None and frac != last_frac and time.monotonic() - last > 1.0:
             progress(lo + (hi - lo) * min(frac, 1.0), label)
             last, last_frac = time.monotonic(), frac
