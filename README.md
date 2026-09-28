@@ -61,6 +61,7 @@ Then, from any terminal (no need for `nix develop`):
 | Check it's running | `systemctl --user status splat-app` |
 | Watch its log | `journalctl --user -u splat-app -f` |
 | Start it automatically when you log in | `systemctl --user enable splat-app` (undo with `disable`) |
+| ...and at boot, without logging in | also `loginctl enable-linger $USER` (undo with `disable-linger`; on NixOS you can set `users.users.<you>.linger = true;` instead) |
 | Remove the service | `bin/splat-app uninstall-service` |
 
 (`bin/splat-app start` / `stop` / `status` / `logs` are shortcuts for the same.)
