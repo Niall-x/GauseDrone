@@ -26,18 +26,21 @@ export function RunDetailPage() {
   if (error && !run) return <ErrorBanner error={error} />;
   if (!run || !info) return <Spinner />;
 
-  const act = async (fn: () => Promise<unknown>) => {
+  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setActionError(null);
     try {
       await fn();
       setActive(true);
       refresh();
+      return true;
     } catch (e) {
       setActionError((e as Error).message);
+      return false;
     }
   };
 
   const exported = run.stages.find((s) => s.name === "export")?.status === "done";
+  const trainStage = run.stages.find((s) => s.name === "train");
   const isActive = ACTIVE.includes(run.status);
   const stageDefs = Object.fromEntries(info.stages.map((s) => [s.name, s]));
   const r = (name: string) => (run.stages.find((s) => s.name === name)?.result ?? {}) as Record<string, number | string>;
@@ -109,7 +112,7 @@ export function RunDetailPage() {
       />
       <ErrorBanner error={actionError} className="mb-4" />
 
-      {showRerun && <RerunPanel run={run} stages={info.stages} onClose={() => setShowRerun(false)} onSubmit={(from, cfg) => act(() => api.rerun(run.id, from, cfg)).then(() => setShowRerun(false))} />}
+      {showRerun && <RerunPanel run={run} stages={info.stages} onClose={() => setShowRerun(false)} onSubmit={(from, cfg) => act(() => api.rerun(run.id, from, cfg)).then((ok) => ok && setShowRerun(false))} />}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -120,8 +123,9 @@ export function RunDetailPage() {
               ))}
             </ol>
           </Card>
-          {run.stages.find((s) => s.name === "train")?.status === "done" && <LossChart url={api.file(run.id, "train/stats.json")} />}
-          {run.stages[0].status === "done" && <FramesStrip runId={run.id} />}
+          {/* Keyed on when the stage finished, so a re-run in place refetches instead of showing the old result. */}
+          {trainStage?.status === "done" && <LossChart key={trainStage.finished ?? ""} url={api.file(run.id, "train/stats.json")} />}
+          {run.stages[0].status === "done" && <FramesStrip key={run.stages[0].finished ?? ""} runId={run.id} version={run.stages[0].finished ?? ""} />}
         </div>
 
         <div className="space-y-4">
@@ -254,8 +258,10 @@ function LogView({ runId, stage, live }: { runId: string; stage: string; live: b
   );
 }
 
-function FramesStrip({ runId }: { runId: string }) {
+function FramesStrip({ runId, version }: { runId: string; version: string }) {
   const { data: frames } = usePoll(() => api.frames(runId), 0, false, [runId]);
+  // Frame file names repeat across re-runs; the version makes the thumbnails refetch.
+  const src = (f: string) => `${api.file(runId, `frames/${f}`)}?v=${encodeURIComponent(version)}`;
   if (!frames?.length) return null;
   const step = Math.max(1, Math.floor(frames.length / 24));
   const sample = frames.filter((_, i) => i % step === 0).slice(0, 24);
@@ -263,8 +269,8 @@ function FramesStrip({ runId }: { runId: string }) {
     <Card title={`Frames (${frames.length})`}>
       <div className="grid grid-cols-4 gap-1.5 p-3 sm:grid-cols-6">
         {sample.map((f) => (
-          <a key={f} href={api.file(runId, `frames/${f}`)} target="_blank" rel="noreferrer" title={f}>
-            <img src={api.file(runId, `frames/${f}`)} loading="lazy" alt={f} className="aspect-video w-full rounded object-cover transition-opacity hover:opacity-80" />
+          <a key={f} href={src(f)} target="_blank" rel="noreferrer" title={f}>
+            <img src={src(f)} loading="lazy" alt={f} className="aspect-video w-full rounded object-cover transition-opacity hover:opacity-80" />
           </a>
         ))}
       </div>

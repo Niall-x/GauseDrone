@@ -87,7 +87,7 @@ def main() -> None:
         default=1,
         help="1 = every frame shares one set of intrinsics (one physical camera, fixed zoom)",
     )
-    p.add_argument("--use-gpu", type=int, choices=[0, 1], default=0, help="needs a CUDA build of COLMAP")
+    p.add_argument("--use-gpu", type=int, choices=[0, 1], default=1, help="GPU SIFT extraction + matching (needs a CUDA build of COLMAP)")
     args = p.parse_args()
 
     paths = RunPaths(args.run_dir)
@@ -133,14 +133,12 @@ def main() -> None:
         match_args += ["--SequentialMatching.overlap", "15"]
     colmap(match_args, (0.25, 0.55), f"{matcher} matching", n_frames)
 
+    # Bundle adjustment stays on the CPU: GPU BA needs Ceres built with CUDA +
+    # cuDSS, which nixpkgs' Ceres isn't (COLMAP would just warn and fall back).
     if args.mapper == "global":
-        map_args = [
-            "global_mapper",
-            "--GlobalMapper.gp_use_gpu", gpu,
-            "--GlobalMapper.ba_ceres_use_gpu", gpu,
-        ]
+        map_args = ["global_mapper", "--GlobalMapper.gp_use_gpu", "0", "--GlobalMapper.ba_ceres_use_gpu", "0"]
     else:
-        map_args = ["mapper", "--Mapper.ba_use_gpu", gpu]
+        map_args = ["mapper", "--Mapper.ba_use_gpu", "0"]
     map_args += ["--database_path", str(db), "--image_path", str(images), "--output_path", str(sparse)]
     colmap(map_args, (0.55, 0.9), f"{args.mapper} mapping", n_frames)
 

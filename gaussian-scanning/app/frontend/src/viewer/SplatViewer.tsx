@@ -2,10 +2,10 @@
 // than embedded, so it can grow drone-specific overlays: the capture
 // trajectory and camera frustums are drawn today; coverage heatmaps or a VIO
 // vs SfM trajectory comparison slot in the same way later.
-import { SparkControls, SparkRenderer, SplatEdit, SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
+import { SparkRenderer, SplatEdit, SplatEditSdf, SplatEditSdfType, SplatMesh } from "@sparkjsdev/spark";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { ViewerControls } from "./controls";
 
 export interface ViewCamera {
   name: string;
@@ -24,8 +24,6 @@ export interface ViewInfo {
   cameras: ViewCamera[];
 }
 
-export type ControlMode = "orbit" | "fly";
-
 export interface ViewerStats {
   fps: number;
   splats: number;
@@ -41,7 +39,6 @@ export interface SplatViewerHandle {
 interface Props {
   url: string;
   view: ViewInfo;
-  mode: ControlMode;
   showTrajectory: boolean;
   showFrustums: boolean;
   /** Hide everything above this fraction of the scene's height (null = off), to see into a room from above. */
@@ -59,7 +56,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
   const propsRef = useRef(props);
   propsRef.current = props;
   const api = useRef<
-    SplatViewerHandle & { setMode(m: ControlMode): void; setOverlays(t: boolean, f: boolean): void; setCutaway(f: number | null): void }
+    SplatViewerHandle & { setOverlays(t: boolean, f: boolean): void; setCutaway(f: number | null): void }
   >(null);
 
   useImperativeHandle(ref, () => ({
@@ -170,34 +167,15 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     highlight.visible = false;
     world.add(highlight);
 
-    // --- controls ---
-    const orbit = new OrbitControls(camera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbit.dampingFactor = 0.12;
-    orbit.zoomSpeed = 0.8;
-    orbit.screenSpacePanning = true;
-    const fly = new SparkControls({ canvas: renderer.domElement });
-    fly.fpsMovement.moveSpeed = extent * 0.15;
-    let mode: ControlMode = propsRef.current.mode;
+    // --- controls: one scheme, see ./controls.ts ---
+    const controls = new ViewerControls(camera, renderer.domElement, {
+      moveSpeed: extent * 0.15,
+      focusDistance: extent * 0.3,
+      minFocus: extent * 0.01,
+    });
 
     const toWorld = (p: THREE.Vector3) => p.clone().applyMatrix4(world.matrixWorld);
     const dirToWorld = (d: THREE.Vector3) => d.clone().applyQuaternion(world.quaternion).normalize();
-
-    const applyMode = (m: ControlMode) => {
-      mode = m;
-      orbit.enabled = m === "orbit";
-      fly.fpsMovement.enable = m === "fly";
-      fly.pointerControls.enable = m === "fly";
-      if (m === "orbit") {
-        // Keep looking where fly mode was looking.
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        const dist = Math.max(camera.position.distanceTo(orbit.target), extent * 0.05);
-        orbit.target.copy(camera.position).addScaledVector(dir, dist);
-        camera.up.set(0, 1, 0);
-        orbit.update();
-      }
-    };
 
     const goToCamera = (i: number) => {
       const c = view.cameras[i];
@@ -205,16 +183,12 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       const pos = toWorld(v3(c.position));
       const fwd = dirToWorld(v3(c.forward));
       camera.position.copy(pos);
-      camera.up.copy(dirToWorld(v3(c.up)));
-      // Orbit around the point on the view ray nearest the scene centre (the
-      // world origin): for a room filmed from inside that is close to the
-      // camera, so orbiting looks around the room instead of swinging the
-      // camera through a wall; for an object orbit it lands on the object.
-      const focus = Math.max(-pos.dot(fwd), extent * 0.05);
-      orbit.target.copy(pos).addScaledVector(fwd, focus);
-      camera.lookAt(orbit.target);
       camera.up.set(0, 1, 0);
-      if (mode === "orbit") orbit.update();
+      // Focus (what right-drag orbits) on the point along the view ray nearest the scene centre (the
+      // world origin): for a room filmed from inside that is close to the camera, so orbiting looks
+      // around the room instead of swinging the camera through a wall; for an object orbit it lands on the object.
+      const focus = Math.max(-pos.dot(fwd), extent * 0.05);
+      controls.lookAt(pos.clone().addScaledVector(fwd, focus));
       highlight.position.copy(v3(c.position));
       highlight.visible = true;
     };
@@ -224,17 +198,13 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       const size = hi.clone().sub(lo).applyQuaternion(world.quaternion);
       const radius = 0.5 * Math.hypot(size.x, size.z);
       const dist = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.9;
-      if (mode !== "orbit") applyMode("orbit");
-      orbit.target.set(0, 0, 0);
       camera.up.set(0, 1, 0);
       camera.position.set(0, dist * 0.8, dist * 0.6);
-      camera.lookAt(orbit.target);
-      orbit.update();
+      controls.lookAt(new THREE.Vector3(0, 0, 0));
       highlight.visible = false;
     };
 
     const resetView = () => {
-      highlight.visible = false;
       goToCamera(0);
       highlight.visible = false;
     };
@@ -242,15 +212,11 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     // Double-click a surface to orbit around it.
     const raycaster = new THREE.Raycaster();
     const onDblClick = (e: MouseEvent) => {
-      if (mode !== "orbit") return;
       const rect = renderer.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(ndc, camera);
       const hit = raycaster.intersectObject(splat, false)[0];
-      if (hit) {
-        orbit.target.copy(hit.point);
-        orbit.update();
-      }
+      if (hit) controls.lookAt(hit.point);
     };
     renderer.domElement.addEventListener("dblclick", onDblClick);
 
@@ -265,7 +231,6 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       resetView,
       overview,
       screenshot,
-      setMode: applyMode,
       setOverlays: (t, f) => {
         trajectory.visible = t;
         frustums.visible = f;
@@ -274,7 +239,6 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     };
     setCutaway(propsRef.current.cutaway);
     api.current.setOverlays(propsRef.current.showTrajectory, propsRef.current.showFrustums);
-    applyMode(mode);
     resetView();
 
     // --- sizing + render loop ---
@@ -293,9 +257,11 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
 
     let frames = 0;
     let lastStats = performance.now();
+    let lastFrame = performance.now();
     renderer.setAnimationLoop(() => {
-      if (mode === "orbit") orbit.update();
-      else fly.update(camera);
+      const now = performance.now();
+      controls.update(Math.min(0.1, (now - lastFrame) / 1000)); // clamp: no leap after a background tab
+      lastFrame = now;
       renderer.render(scene, camera);
       frames++;
       const t = performance.now();
@@ -310,19 +276,22 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       renderer.setAnimationLoop(null);
       ro.disconnect();
       renderer.domElement.removeEventListener("dblclick", onDblClick);
-      orbit.dispose();
+      controls.dispose();
       splat.dispose();
-      trajectory.geometry.dispose();
-      frustums.geometry.dispose();
+      for (const obj of [trajectory, frustums, highlight]) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
       renderer.dispose();
+      // Browsers cap live WebGL contexts (~16); release this one now rather than at GC.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
       api.current = null;
     };
-    // The scene is rebuilt only when the file changes; mode/overlays update in place.
+    // The scene is rebuilt only when the file changes; overlays update in place.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.url]);
 
-  useEffect(() => api.current?.setMode(props.mode), [props.mode]);
   useEffect(() => api.current?.setOverlays(props.showTrajectory, props.showFrustums), [props.showTrajectory, props.showFrustums]);
   useEffect(() => api.current?.setCutaway(props.cutaway), [props.cutaway]);
 

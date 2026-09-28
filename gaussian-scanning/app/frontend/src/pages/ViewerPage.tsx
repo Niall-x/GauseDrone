@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Map as MapIcon, Move3d, Orbit, Route, Scissors, Video } from "lucide-react";
+import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Map as MapIcon, Route, Scissors, Video } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api/client";
 import { ErrorBanner, Spinner } from "../components/ui";
 import { usePoll } from "../lib/hooks";
-import { SplatViewer, type ControlMode, type SplatViewerHandle, type ViewInfo, type ViewerStats } from "../viewer/SplatViewer";
+import { SplatViewer, type SplatViewerHandle, type ViewInfo, type ViewerStats } from "../viewer/SplatViewer";
 
 export function ViewerPage() {
   const { runId = "" } = useParams();
@@ -16,7 +16,6 @@ export function ViewerPage() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stats, setStats] = useState<ViewerStats | null>(null);
-  const [mode, setMode] = useState<ControlMode>("orbit");
   const [showTrajectory, setShowTrajectory] = useState(false);
   const [showFrustums, setShowFrustums] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
@@ -43,13 +42,14 @@ export function ViewerPage() {
   // Keyboard: [ and ] step through capture cameras, R resets.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      const t = e.target as HTMLInputElement | null;
+      if ((t?.tagName === "INPUT" && t.type !== "range") || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "]") goTo((camIndex ?? -1) + 1);
       else if (e.key === "[") goTo((camIndex ?? 1) - 1);
-      else if (e.key === "r" && mode === "orbit") {
+      else if (e.key === "r") {
         setCamIndex(null);
         viewer.current?.resetView();
-      } else if (e.key === "o" && mode === "orbit") {
+      } else if (e.key === "o") {
         setCamIndex(null);
         setShowTrajectory(true);
         setCutaway((c) => c ?? 0.6);
@@ -80,7 +80,6 @@ export function ViewerPage() {
           ref={viewer}
           url={api.file(runId, "export/splat.spz")}
           view={view}
-          mode={mode}
           showTrajectory={showTrajectory}
           showFrustums={showFrustums}
           cutaway={cutaway}
@@ -108,13 +107,6 @@ export function ViewerPage() {
         </div>
 
         <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-line bg-panel/85 p-1 backdrop-blur">
-          <ToolButton active={mode === "orbit"} onClick={() => setMode("orbit")} title="Orbit: drag to rotate, right-drag to pan, scroll to zoom, double-click to focus">
-            <Orbit className="size-4" />
-          </ToolButton>
-          <ToolButton active={mode === "fly"} onClick={() => setMode("fly")} title="Fly: WASD/arrows to move, Q/E up/down, drag to look">
-            <Move3d className="size-4" />
-          </ToolButton>
-          <Divider />
           <ToolButton active={showTrajectory} onClick={() => setShowTrajectory((v) => !v)} title="Capture path">
             <Route className="size-4" />
           </ToolButton>
@@ -131,7 +123,6 @@ export function ViewerPage() {
           <ToolButton
             onClick={() => {
               setCamIndex(null);
-              setMode("orbit");
               setShowTrajectory(true);
               setCutaway((c) => c ?? 0.6);
               viewer.current?.overview();
@@ -227,8 +218,8 @@ export function ViewerPage() {
       {showHelp && (
         <div className="absolute right-3 top-28 w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
           <h3 className="mb-2 text-sm font-semibold text-fg">Controls</h3>
-          <HelpRow k="Orbit">drag rotate · right-drag pan · scroll zoom · double-click a surface to orbit it</HelpRow>
-          <HelpRow k="Fly">W A S D / arrows move · Q E down/up · drag look · Shift faster</HelpRow>
+          <HelpRow k="Move">W A S D / arrows · E or Space up · Q or C down · Shift faster · scroll forward/back</HelpRow>
+          <HelpRow k="Mouse">drag look around · right-drag orbit · middle-drag pan · double-click a surface to orbit it</HelpRow>
           <HelpRow k="[ ]">step through the capture cameras</HelpRow>
           <HelpRow k="O">overview from above, with the capture path and a cutaway</HelpRow>
           <HelpRow k="R">reset view</HelpRow>

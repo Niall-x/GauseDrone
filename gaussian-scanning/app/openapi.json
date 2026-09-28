@@ -192,20 +192,216 @@
         }
       }
     },
-    "/api/captures/upload": {
+    "/api/uploads": {
+      "get": {
+        "summary": "List Uploads",
+        "description": "Unfinished uploads; the browser resumes one when the same files are picked again.",
+        "operationId": "list_uploads_api_uploads_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Upload"
+                  },
+                  "type": "array",
+                  "title": "Response List Uploads Api Uploads Get"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
-        "summary": "Upload Capture",
-        "operationId": "upload_capture_api_captures_upload_post",
+        "summary": "Create Upload",
+        "operationId": "create_upload_api_uploads_post",
         "requestBody": {
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Body_upload_capture_api_captures_upload_post"
+                "$ref": "#/components/schemas/CreateUploadRequest"
               }
             }
           },
           "required": true
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/{upload_id}": {
+      "get": {
+        "summary": "Get Upload",
+        "operationId": "get_upload_api_uploads__upload_id__get",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Upload",
+        "operationId": "delete_upload_api_uploads__upload_id__delete",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Upload Api Uploads  Upload Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/{upload_id}/files/{index}": {
+      "put": {
+        "summary": "Upload Chunk",
+        "description": "Raw bytes of one file starting at `offset`. 409 (with the server's byte\ncount) if that isn't where the file currently ends, so a client can resync.",
+        "operationId": "upload_chunk_api_uploads__upload_id__files__index__put",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/{upload_id}/finish": {
+      "post": {
+        "summary": "Finish Upload",
+        "operationId": "finish_upload_api_uploads__upload_id__finish_post",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -766,28 +962,6 @@
   },
   "components": {
     "schemas": {
-      "Body_upload_capture_api_captures_upload_post": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "files": {
-            "items": {
-              "type": "string",
-              "contentMediaType": "application/octet-stream"
-            },
-            "type": "array",
-            "title": "Files"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "files"
-        ],
-        "title": "Body_upload_capture_api_captures_upload_post"
-      },
       "Capture": {
         "properties": {
           "id": {
@@ -956,6 +1130,28 @@
           "capture_id"
         ],
         "title": "CreateRunRequest"
+      },
+      "CreateUploadRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFileSpec"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "CreateUploadRequest"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1240,6 +1436,86 @@
         },
         "type": "object",
         "title": "UpdateRequest"
+      },
+      "Upload": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created": {
+            "type": "string",
+            "title": "Created"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadItem"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created",
+          "files"
+        ],
+        "title": "Upload",
+        "description": "A browser upload in progress: files arrive in chunks and survive dropped\nconnections and server restarts, then become a capture when all are complete."
+      },
+      "UploadFileSpec": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "size"
+        ],
+        "title": "UploadFileSpec"
+      },
+      "UploadItem": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "received": {
+            "type": "integer",
+            "title": "Received",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "name",
+          "size",
+          "received"
+        ],
+        "title": "UploadItem"
       },
       "ValidationError": {
         "properties": {

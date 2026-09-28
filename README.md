@@ -121,23 +121,26 @@ This checks the whole setup before you film anything.
 
 1. Copy the video to the computer running Splat Lab.
 2. **Captures** → *Import from a path on the server* → paste the video's path
-   → **Import**. (Dragging the file into *Upload* also works but is slow for
-   big videos.) Tick *Link instead of copying* to avoid duplicating big files;
-   the original must then stay where it is.
+   → **Import**. (Dragging the file into *Upload* also works but is slower for
+   big videos; if an upload is interrupted, pick the same files again and press
+   **Resume upload** to continue where it stopped.) Tick *Link instead of
+   copying* to avoid duplicating big files; the original must then stay where it is.
 3. **Run** → **Draft** → **Start run**. Default settings are a good start:
    2 frames per second of video, images up to 1600 px.
 4. Check the result in the viewer. If it looks right, get the full-quality
    version without redoing the slow camera-pose step: on the run page click
    **New run from this**, keep *Reuse up to Camera poses*, choose
-   **Standard**, and start it (about 15–20 min of training).
+   **Standard**, and start it (about 10 min of training).
 
 ### 6. Using the viewer
 
 | Control | What it does |
 |---|---|
-| Drag / right-drag / scroll | Orbit / pan / zoom |
-| Double-click a surface | Orbit around that point |
-| Fly button, then **W A S D**, **Q / E** | Walk through the scene, down / up (hold Shift to go faster) |
+| **W A S D** or arrow keys | Move through the scene (hold Shift to go faster) |
+| **E** / Space, **Q** / C | Up / down |
+| Drag | Look around (works while moving, like a game) |
+| Right-drag / middle-drag / scroll | Orbit the point you're looking at / pan / move forward and back |
+| Double-click a surface | Look at that point and orbit around it |
 | **[** and **]**, or the slider at the bottom | Jump to each position the camera was filmed from |
 | Photo button | Show the original frame next to the render at that position (quickest way to spot weak areas) |
 | **O** (map button) | View from above with the ceiling cut away and the filming path drawn in, to check what was covered |
@@ -209,9 +212,12 @@ it's off, visitors get a "bad gateway" page.
 Things to know before sharing:
 
 - **There is no login.** Anyone who can reach it can start, cancel and delete
-  runs, and *Import from a path* can read any folder on the host machine
-  (images in it become viewable through a run). Only share with people you
-  trust, and **never use Tailscale Funnel** (that makes it public).
+  runs, and *Import from a path* can read any non-hidden folder under your home
+  directory (images in it become viewable through a run). To narrow that, set
+  `SPLAT_IMPORT_ROOTS` to the folders captures should come from (`:`-separated,
+  e.g. `~/scans`), for the service via `systemctl --user edit splat-app`
+  (`[Service]` then `Environment=SPLAT_IMPORT_ROOTS=/home/you/scans`). Only
+  share with people you trust, and **never use Tailscale Funnel** (that makes it public).
 - **Sharing a machine exposes all its ports** to the other person by
   default, not just this app. To limit a shared friend to Splat Lab, allow
   only port 443 for them in your tailnet access-control policy (see Tailscale's
@@ -219,7 +225,8 @@ Things to know before sharing:
 - Training runs on the host's GPU; the viewer runs in the visitor's browser
   (it downloads the 10–35 MB splat). *Upload from this computer* sends files
   from the visitor's machine, so big videos are slow over the internet: trim
-  them first. *Import from a path* only sees files on the host.
+  them first. Uploads resume after a dropped connection (re-pick the same
+  files). *Import from a path* only sees files on the host.
 
 ---
 

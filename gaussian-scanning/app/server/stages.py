@@ -63,6 +63,8 @@ STAGES: list[Stage] = [
                   choices=["OPENCV", "SIMPLE_RADIAL", "PINHOLE", "OPENCV_FISHEYE"]),
             Param("single-camera", "Single camera", "choice", 1,
                   "1 if every frame came from the same camera at the same zoom", choices=[1, 0]),
+            Param("use-gpu", "GPU features + matching", "choice", 1,
+                  "1 = SIFT extraction and matching on the GPU (several times faster matching); 0 = CPU", choices=[1, 0]),
         ],
     ),
     Stage(

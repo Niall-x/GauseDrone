@@ -145,3 +145,91 @@ def test_read_colmap_text_model(tmp_path):
     assert np.allclose(a.world_to_cam[:3, 3], [1, 2, 3])
     assert np.allclose(images[1].cam_to_world[:3, 3], [0, 0, -5])
     assert xyz.shape == (1, 3) and rgb.tolist() == [[255, 0, 10]] and np.isclose(err[0], 0.7)
+
+
+def jpeg_with_orientation(path, h, w, orientation, byte_order="II"):
+    """A JPEG of h x w stored pixels carrying an EXIF orientation tag (what phones write)."""
+    import cv2
+
+    ok, jpg = cv2.imencode(".jpg", (np.random.default_rng(0).random((h, w, 3)) * 255).astype(np.uint8))
+    o = "<" if byte_order == "II" else ">"
+    tiff = byte_order.encode() + struct.pack(f"{o}HI", 42, 8) + struct.pack(f"{o}H", 1)
+    tiff += struct.pack(f"{o}HHIHH", 0x0112, 3, 1, orientation, 0) + struct.pack(f"{o}I", 0)
+    app1 = b"Exif\0\0" + tiff
+    raw = jpg.tobytes()
+    path.write_bytes(raw[:2] + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1 + raw[2:])
+
+
+def test_jpeg_orientation(tmp_path):
+    from pipeline.extract_frames import jpeg_orientation
+
+    for order in ("II", "MM"):
+        jpeg_with_orientation(tmp_path / f"r{order}.jpg", 20, 30, 6, order)
+        assert jpeg_orientation(tmp_path / f"r{order}.jpg") == 6
+    import cv2
+
+    cv2.imwrite(str(tmp_path / "plain.jpg"), np.zeros((8, 8, 3), np.uint8))
+    assert jpeg_orientation(tmp_path / "plain.jpg") == 1
+    (tmp_path / "junk.jpg").write_bytes(b"\xff\xd8\xff\xe1\x00")  # truncated header must not crash
+    assert jpeg_orientation(tmp_path / "junk.jpg") == 1
+
+
+def run_frames(run_dir, src, *args):
+    import subprocess
+    import sys
+
+    subprocess.run([sys.executable, "-m", "pipeline.extract_frames", "--run-dir", str(run_dir), "--input", str(src), *args],
+                   check=True, capture_output=True)
+
+
+def test_rotated_photos_are_stored_upright(tmp_path):
+    """COLMAP ignores EXIF orientation, so a frame must never rely on it."""
+    import csv
+
+    import cv2
+
+    src = tmp_path / "photos"
+    src.mkdir()
+    jpeg_with_orientation(src / "a_rotated.jpg", 200, 300, 6)  # stored landscape, shown portrait
+    for i in range(3):
+        cv2.imwrite(str(src / f"b{i}.jpg"), np.zeros((300, 200, 3), np.uint8))
+    run_frames(tmp_path / "run", src)
+    rows = list(csv.DictReader(open(tmp_path / "run" / "frames.csv")))
+    for r in rows:
+        raw = cv2.imread(str(tmp_path / "run" / "frames" / r["file_name"]), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+        assert raw.shape[:2] == (300, 200), r["file_name"]  # the pixels COLMAP sees are upright
+        assert (int(r["width"]), int(r["height"])) == (200, 300)  # and match what frames.csv says
+
+
+def test_rerun_never_rewrites_a_shared_frames_csv(tmp_path):
+    """'New run from this' hard-links frames.csv; re-running frames in one run must not change the other."""
+    import os
+
+    import cv2
+
+    src = tmp_path / "photos"
+    src.mkdir()
+    for i in range(3):
+        cv2.imwrite(str(src / f"{i}.jpg"), np.zeros((200, 300, 3), np.uint8))
+    base, reuse = tmp_path / "base", tmp_path / "reuse"
+    run_frames(base, src)
+    reuse.mkdir()
+    os.link(base / "frames.csv", reuse / "frames.csv")
+    before = (base / "frames.csv").read_text()
+    run_frames(reuse, src, "--max-size", "100")
+    assert (base / "frames.csv").read_text() == before
+    assert (reuse / "frames.csv").read_text() != before
+
+
+def test_knn_handles_tiny_clouds():
+    import torch
+
+    from pipeline.train import knn_mean_dist
+
+    for n in (1, 2, 3, 4, 5):
+        d = knn_mean_dist(torch.rand(n, 3))
+        assert d.shape == (n,) and torch.isfinite(d).all()
+    pts = torch.tensor([[0.0, 0, 0], [1, 0, 0], [0, 2, 0], [0, 0, 3], [10, 10, 10]])
+    small = knn_mean_dist(pts, max_elements=5)  # one row per chunk
+    assert torch.allclose(small, knn_mean_dist(pts))
+    assert torch.isclose(small[0], torch.tensor(2.0))  # neighbours at 1, 2, 3

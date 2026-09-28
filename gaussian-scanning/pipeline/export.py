@@ -29,14 +29,17 @@ def write_ply(path: Path, s: dict[str, np.ndarray]) -> None:
     f_rest = s["shN"].transpose(0, 2, 1).reshape(n, -1)
     cols = [
         ("x", s["means"][:, 0]), ("y", s["means"][:, 1]), ("z", s["means"][:, 2]),
-        ("nx", np.zeros(n)), ("ny", np.zeros(n)), ("nz", np.zeros(n)),
+        ("nx", 0), ("ny", 0), ("nz", 0),
         *[(f"f_dc_{i}", s["sh0"][:, 0, i]) for i in range(3)],
         *[(f"f_rest_{i}", f_rest[:, i]) for i in range(f_rest.shape[1])],
         ("opacity", s["opacities"]),
         *[(f"scale_{i}", s["scales"][:, i]) for i in range(3)],
         *[(f"rot_{i}", s["quats"][:, i]) for i in range(4)],
     ]
-    data = np.stack([c for _, c in cols], axis=1).astype("<f4")
+    # Filled in place: stacking the columns would build a float64 copy first (3x the memory).
+    data = np.empty((n, len(cols)), "<f4")
+    for j, (_, c) in enumerate(cols):
+        data[:, j] = c
     header = "ply\nformat binary_little_endian 1.0\n" f"element vertex {n}\n"
     header += "".join(f"property float {name}\n" for name, _ in cols) + "end_header\n"
     with open(path, "wb") as fh:
@@ -67,13 +70,17 @@ def write_spz(path: Path, s: dict[str, np.ndarray], sh_degree: int) -> None:
     parts = [positions.tobytes(), alphas.tobytes(), colors.tobytes(), scales.tobytes(), rotations.tobytes()]
     if sh_degree > 0:
         k = (sh_degree + 1) ** 2 - 1
-        sh = s["shN"][:, :k, :] * 128.0 + 128.0
+        # float32 and in place: this is the largest array (n x 45), and float64 temporaries tripled export memory.
+        sh = s["shN"][:, :k, :].astype(np.float32) * np.float32(128)
+        sh += 128
         # Same bucketing as the reference encoder: 5 bits for degree 1, 4 for higher.
-        step = np.ones((k, 1))
+        step = np.full((k, 1), 1 << 4, np.float32)
         step[:3] = 1 << 3
-        step[3:] = 1 << 4
-        sh = np.round(sh / step) * step
-        parts.append(u8(np.minimum(sh, 255)).tobytes())
+        sh /= step
+        np.round(sh, out=sh)
+        sh *= step
+        np.minimum(sh, 255, out=sh)
+        parts.append(u8(sh).tobytes())
 
     header = struct.pack("<IIIBBBB", 0x5053474E, 2, n, sh_degree, frac_bits, 0, 0)
     with gzip.open(path, "wb", compresslevel=6) as fh:
@@ -145,7 +152,7 @@ def main() -> None:
     paths = RunPaths(args.run_dir)
     out = fresh_dir(paths.export)
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=True)
-    s = {k: v.numpy().astype(np.float32) for k, v in ckpt["splats"].items()}
+    s = {k: v.numpy().astype(np.float32, copy=False) for k, v in ckpt["splats"].items()}
     sh_degree = ckpt["sh_degree"]
 
     keep = 1 / (1 + np.exp(-s["opacities"])) >= args.min_opacity

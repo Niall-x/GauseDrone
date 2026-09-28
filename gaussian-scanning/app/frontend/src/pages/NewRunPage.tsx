@@ -32,6 +32,18 @@ export function NewRunPage() {
     else if (!captureId && captures?.length) setCaptureId(captures[0].id);
   }, [baseRun, captures, captureId]);
 
+  // Reuse as much as the base run finished (up to camera poses): the server refuses to reuse unfinished stages.
+  useEffect(() => {
+    if (!baseRun || !info) return;
+    let last = "";
+    for (const s of info.stages.slice(0, -1)) {
+      if (baseRun.stages.find((x) => x.name === s.name)?.status !== "done") break;
+      last = s.name;
+      if (s.name === "sfm") break;
+    }
+    if (last) setReuseUntil(last);
+  }, [baseRun, info]);
+
   // Settings = defaults <- (base run, if reusing) <- preset. Rebuilt when those change.
   useEffect(() => {
     if (!info) return;
@@ -152,7 +164,7 @@ export function NewRunPage() {
             </div>
             {estimate != null && !baseRun && (
               <p className="text-xs text-faint">
-                ≈ {estimate} frames. Camera poses are solved on the CPU and take a few minutes for a few hundred frames.
+                ≈ {estimate} frames. Camera poses take a minute or two for a few hundred frames.
               </p>
             )}
 

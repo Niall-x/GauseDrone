@@ -68,7 +68,39 @@ class Run(BaseModel):
         return next(s for s in self.stages if s.name == name)
 
 
+class UploadItem(BaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    source: str  # path as the browser named it (used to match a re-selected file when resuming)
+    name: str  # file name inside the capture's source/ folder (flattened, never clashing)
+    size: int
+    received: int = 0  # bytes on the server; always read from the file on disk, not stored
+
+
+class Upload(BaseModel):
+    """A browser upload in progress: files arrive in chunks and survive dropped
+    connections and server restarts, then become a capture when all are complete."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    id: str
+    name: str
+    created: str = Field(default_factory=now)
+    files: list[UploadItem]
+
+
 # --- API request bodies ---
+
+class UploadFileSpec(BaseModel):
+    source: str
+    size: int = Field(ge=0)
+
+
+class CreateUploadRequest(BaseModel):
+    name: str
+    files: list[UploadFileSpec] = Field(min_length=1)
+
+
 
 class ImportCaptureRequest(BaseModel):
     path: str

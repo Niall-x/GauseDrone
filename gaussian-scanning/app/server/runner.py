@@ -173,20 +173,31 @@ class Runner:
             self.store.update_run(run.id, lambda r: setattr(r.stage(stage_name), "pid", proc.pid))
             last_persist = 0.0
             for line in proc.stdout:
+                # A malformed protocol line must not escape this loop: that would
+                # abandon the stage process while it keeps running. Log it instead.
                 if line.startswith("@@progress "):
                     _, frac, *msg = line.rstrip("\n").split(" ", 2)
-                    def tick(r: Run, frac=float(frac), msg=msg[0] if msg else ""):
-                        s = r.stage(stage_name)
-                        s.progress, s.message = frac, msg
-                    persist = time.monotonic() - last_persist > PERSIST_EVERY_SEC
-                    self.store.update_run(run.id, tick, persist=persist)
-                    if persist:
-                        last_persist = time.monotonic()
-                    continue
-                if line.startswith("@@result "):
-                    values = json.loads(line[len("@@result "):])
-                    self.store.update_run(run.id, lambda r: r.stage(stage_name).result.update(values))
-                    continue
+                    try:
+                        value = min(1.0, max(0.0, float(frac)))
+                    except ValueError:
+                        value = None
+                    if value is not None:
+                        def tick(r: Run, frac=value, msg=msg[0] if msg else ""):
+                            s = r.stage(stage_name)
+                            s.progress, s.message = frac, msg
+                        persist = time.monotonic() - last_persist > PERSIST_EVERY_SEC
+                        self.store.update_run(run.id, tick, persist=persist)
+                        if persist:
+                            last_persist = time.monotonic()
+                        continue
+                elif line.startswith("@@result "):
+                    try:
+                        values = json.loads(line[len("@@result "):])
+                    except ValueError:
+                        values = None
+                    if isinstance(values, dict):
+                        self.store.update_run(run.id, lambda r: r.stage(stage_name).result.update(values))
+                        continue
                 log.write(line)
                 log.flush()
                 tail.append(line.rstrip())

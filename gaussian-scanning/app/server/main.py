@@ -12,24 +12,31 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.server import stages
 from app.server.models import (
     Capture,
     CreateRunRequest,
+    CreateUploadRequest,
     ImportCaptureRequest,
     RerunRequest,
     Run,
     StageState,
     UpdateRequest,
+    Upload,
+    UploadItem,
 )
 from app.server.runner import PROJECT_ROOT, Runner
-from app.server.store import Store
+from app.server.store import OffsetMismatch, Store, check_source
 
 DATA_DIR = Path(os.environ.get("SPLAT_DATA_DIR", PROJECT_ROOT / "data"))
+# Folders "import by path" may read from (os.pathsep-separated). Anyone who can
+# reach the app can import from these, so narrow it when sharing the app.
+IMPORT_ROOTS = [Path(p).expanduser().resolve() for p in os.environ.get("SPLAT_IMPORT_ROOTS", "~").split(os.pathsep) if p]
 FRONTEND_DIST = PROJECT_ROOT / "app" / "frontend" / "dist"
 
 store: Store
@@ -76,6 +83,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GauseDrone Splat App", version="0.1.0", lifespan=lifespan)
+
+
+def revalidated_file(request: Request, path: Path) -> Response:
+    """A file served with `Cache-Control: no-cache` that answers a matching If-None-Match
+    with 304, so the browser keeps its copy until the file changes (FileResponse alone
+    always resends the whole body, e.g. a 35 MB splat on every viewer visit)."""
+    response = FileResponse(path, headers={"Cache-Control": "no-cache"}, stat_result=path.stat())
+    etag = response.headers["etag"]
+    if etag in [t.strip().removeprefix("W/") for t in request.headers.get("if-none-match", "").split(",")]:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+    return response
 
 
 def get_run_or_404(run_id: str) -> Run:
@@ -134,33 +152,92 @@ def get_capture(capture_id: str) -> Capture:
     return get_capture_or_404(capture_id)
 
 
-@app.post("/api/captures/upload")
-def upload_capture(name: str = Form(...), files: list[UploadFile] = File(...)) -> Capture:
-    capture_id = store.new_id(name, store.captures_dir)
-    src = store.capture_dir(capture_id) / "source"
-    src.mkdir(parents=True)
+# --- uploads: create, send each file in chunks (resumable), finish into a capture ---
+
+MAX_CHUNK_BYTES = 64 << 20
+
+
+def get_upload_or_404(upload_id: str) -> Upload:
+    upload = store.get_upload(upload_id)
+    if upload is None:
+        raise HTTPException(404, f"no upload {upload_id}")
+    return upload
+
+
+@app.get("/api/uploads")
+def list_uploads() -> list[Upload]:
+    """Unfinished uploads; the browser resumes one when the same files are picked again."""
+    return store.list_uploads()
+
+
+@app.post("/api/uploads")
+def create_upload(req: CreateUploadRequest) -> Upload:
+    total = sum(f.size for f in req.files)
+    free = shutil.disk_usage(DATA_DIR).free
+    if total > free - (1 << 30):
+        raise HTTPException(507, f"not enough disk space: {total / 1e9:.1f} GB to upload, {free / 1e9:.1f} GB free")
     try:
-        for f in files:
-            # Folder uploads are flattened; camera dumps often repeat names across
-            # subfolders (DCIM/100/IMG_0001, DCIM/101/IMG_0001), so never overwrite.
-            fname = Path(f.filename or "file")
-            target, i = src / fname.name, 2
-            while target.exists():
-                target, i = src / f"{fname.stem}_{i}{fname.suffix}", i + 1
-            with open(target, "wb") as out:
-                shutil.copyfileobj(f.file, out, 1 << 20)
-        return store.finalize_capture(capture_id, name, origin="upload", linked=False)
+        return store.create_upload(req.name, req.files)
     except ValueError as e:
-        shutil.rmtree(store.capture_dir(capture_id), ignore_errors=True)
         raise HTTPException(400, str(e))
+
+
+@app.get("/api/uploads/{upload_id}")
+def get_upload(upload_id: str) -> Upload:
+    return get_upload_or_404(upload_id)
+
+
+@app.put("/api/uploads/{upload_id}/files/{index}")
+async def upload_chunk(upload_id: str, index: int, offset: int, request: Request) -> UploadItem:
+    """Raw bytes of one file starting at `offset`. 409 (with the server's byte
+    count) if that isn't where the file currently ends, so a client can resync."""
+    data = bytearray()
+    async for part in request.stream():
+        data += part
+        if len(data) > MAX_CHUNK_BYTES:
+            raise HTTPException(413, f"chunks are limited to {MAX_CHUNK_BYTES >> 20} MB")
+    try:
+        return await run_in_threadpool(store.write_chunk, upload_id, index, offset, data)
+    except KeyError:
+        raise HTTPException(404, f"no upload {upload_id} file {index}")
+    except OffsetMismatch as e:
+        raise HTTPException(409, {"message": str(e), "received": e.received})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/uploads/{upload_id}/finish")
+def finish_upload(upload_id: str) -> Capture:
+    get_upload_or_404(upload_id)
+    try:
+        return store.finish_upload(upload_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/uploads/{upload_id}")
+def delete_upload(upload_id: str) -> dict:
+    get_upload_or_404(upload_id)
+    store.delete_upload(upload_id)
+    return {"deleted": upload_id}
 
 
 @app.post("/api/captures/import")
 def import_capture(req: ImportCaptureRequest) -> Capture:
-    source = Path(req.path).expanduser()
+    source = Path(req.path).expanduser().resolve()  # resolved first, so symlinks can't lead outside the roots
+    root = next((r for r in IMPORT_ROOTS if source == r or r in source.parents), None)
+    if root is None:
+        roots = ", ".join(map(str, IMPORT_ROOTS))
+        raise HTTPException(403, f"{req.path} is outside the folders captures can be imported from ({roots}); see SPLAT_IMPORT_ROOTS")
+    if any(part.startswith(".") for part in source.relative_to(root).parts):
+        raise HTTPException(403, "hidden folders can't be imported")
     if not source.exists():
         raise HTTPException(400, f"{source} does not exist on the server")
-    name = req.name or source.stem
+    try:
+        check_source(source)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    name = req.name or Path(req.path).expanduser().stem
     capture_id = store.new_id(name, store.captures_dir)
     d = store.capture_dir(capture_id)
     d.mkdir(parents=True)
@@ -378,25 +455,37 @@ def run_frames(run_id: str) -> list[str]:
 
 
 @app.get("/api/runs/{run_id}/files/{path:path}")
-def run_file(run_id: str, path: str):
+def run_file(run_id: str, path: str, request: Request):
     get_run_or_404(run_id)
     root = store.run_dir(run_id).resolve()
     target = (root / path).resolve()
     if root not in target.parents or not target.is_file():
         raise HTTPException(404)
-    return FileResponse(target)
+    # Re-running a stage in place rewrites files at the same URL (splat.spz, stats.json, frames),
+    # so browsers must revalidate rather than guess a cache lifetime.
+    return revalidated_file(request, target)
 
 
 # --- frontend (production build) ---
 
+class HashedAssets(StaticFiles):
+    """Vite puts a content hash in every asset name, so a cached copy can never be stale."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    app.mount("/assets", HashedAssets(directory=FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    def spa(full_path: str):
+    def spa(full_path: str, request: Request):
         if full_path.startswith("api/"):
             raise HTTPException(404, "no such API endpoint")
         candidate = (FRONTEND_DIST / full_path).resolve()
         if full_path and FRONTEND_DIST.resolve() in candidate.parents and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+            return revalidated_file(request, candidate)
+        # index.html names the current hashed bundles; a stale copy would load the old app after a rebuild.
+        return revalidated_file(request, FRONTEND_DIST / "index.html")

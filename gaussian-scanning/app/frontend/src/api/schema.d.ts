@@ -74,7 +74,67 @@ export interface paths {
         patch: operations["update_capture_api_captures__capture_id__patch"];
         trace?: never;
     };
-    "/api/captures/upload": {
+    "/api/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Uploads
+         * @description Unfinished uploads; the browser resumes one when the same files are picked again.
+         */
+        get: operations["list_uploads_api_uploads_get"];
+        put?: never;
+        /** Create Upload */
+        post: operations["create_upload_api_uploads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Upload */
+        get: operations["get_upload_api_uploads__upload_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Upload */
+        delete: operations["delete_upload_api_uploads__upload_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}/files/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload Chunk
+         * @description Raw bytes of one file starting at `offset`. 409 (with the server's byte
+         *     count) if that isn't where the file currently ends, so a client can resync.
+         */
+        put: operations["upload_chunk_api_uploads__upload_id__files__index__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/uploads/{upload_id}/finish": {
         parameters: {
             query?: never;
             header?: never;
@@ -83,8 +143,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upload Capture */
-        post: operations["upload_capture_api_captures_upload_post"];
+        /** Finish Upload */
+        post: operations["finish_upload_api_uploads__upload_id__finish_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -271,13 +331,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** Body_upload_capture_api_captures_upload_post */
-        Body_upload_capture_api_captures_upload_post: {
-            /** Name */
-            name: string;
-            /** Files */
-            files: string[];
-        };
         /** Capture */
         Capture: {
             /** Id */
@@ -341,6 +394,13 @@ export interface components {
             base_run_id?: string | null;
             /** Reuse Until */
             reuse_until?: string | null;
+        };
+        /** CreateUploadRequest */
+        CreateUploadRequest: {
+            /** Name */
+            name: string;
+            /** Files */
+            files: components["schemas"]["UploadFileSpec"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -447,6 +507,42 @@ export interface components {
             name?: string | null;
             /** Notes */
             notes?: string | null;
+        };
+        /**
+         * Upload
+         * @description A browser upload in progress: files arrive in chunks and survive dropped
+         *     connections and server restarts, then become a capture when all are complete.
+         */
+        Upload: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Created */
+            created: string;
+            /** Files */
+            files: components["schemas"]["UploadItem"][];
+        };
+        /** UploadFileSpec */
+        UploadFileSpec: {
+            /** Source */
+            source: string;
+            /** Size */
+            size: number;
+        };
+        /** UploadItem */
+        UploadItem: {
+            /** Source */
+            source: string;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /**
+             * Received
+             * @default 0
+             */
+            received: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -633,7 +729,27 @@ export interface operations {
             };
         };
     };
-    upload_capture_api_captures_upload_post: {
+    list_uploads_api_uploads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upload"][];
+                };
+            };
+        };
+    };
+    create_upload_api_uploads_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -642,9 +758,138 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "multipart/form-data": components["schemas"]["Body_upload_capture_api_captures_upload_post"];
+                "application/json": components["schemas"]["CreateUploadRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_upload_api_uploads__upload_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_upload_api_uploads__upload_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_chunk_api_uploads__upload_id__files__index__put: {
+        parameters: {
+            query: {
+                offset: number;
+            };
+            header?: never;
+            path: {
+                upload_id: string;
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_upload_api_uploads__upload_id__finish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

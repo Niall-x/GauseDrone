@@ -33,6 +33,17 @@
 
       # nvcc 12.9 rejects the newest GCC; use the host compiler nixpkgs pairs with it.
       hostCC = cuda.backendStdenv.cc;
+
+      # CUDA COLMAP (GPU SIFT extraction + matching). cache.nixos.org has no
+      # CUDA builds, so the first `nix develop` compiles it locally (once per
+      # nixpkgs bump). Kernels only for the RTX 40xx (sm_89) to keep that short;
+      # add capabilities here for other GPUs.
+      colmap = pkgs.colmap.override {
+        cudaSupport = true;
+        cudaPackages = cuda;
+        cudaCapabilities = [ "8.9" ];
+        enableTests = false;
+      };
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -40,7 +51,7 @@
           python
           pkgs.uv
           pkgs.nodejs_22
-          pkgs.colmap
+          colmap
           pkgs.ffmpeg
           pkgs.ninja
           pkgs.git

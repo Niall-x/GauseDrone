@@ -31,6 +31,8 @@ SH_C0 = 0.28209479177387814
 
 def ssim(img1: torch.Tensor, img2: torch.Tensor) -> torch.Tensor:
     """Mean SSIM of two [1,3,H,W] images in [0,1] (11x11 Gaussian window, sigma 1.5)."""
+    # Callers pass permuted HWC renders; grouped conv on a non-contiguous view is ~10x slower (and dominated each step).
+    img1, img2 = img1.contiguous(), img2.contiguous()
     g = torch.exp(-((torch.arange(11, device=img1.device) - 5) ** 2) / (2 * 1.5**2))
     g = (g / g.sum()).float()
     win = (g[:, None] @ g[None, :]).expand(3, 1, 11, 11).contiguous()
@@ -47,10 +49,16 @@ def psnr(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(-10 * torch.log10(F.mse_loss(a, b)))
 
 
-def knn_mean_dist(points: torch.Tensor, k: int = 3, chunk: int = 4096) -> torch.Tensor:
+def knn_mean_dist(points: torch.Tensor, k: int = 3, max_elements: int = 1 << 25) -> torch.Tensor:
     """Mean distance from each point to its k nearest neighbours (for initial Gaussian size)."""
-    out = torch.empty(len(points), device=points.device)
-    for i in range(0, len(points), chunk):
+    n = len(points)
+    k = min(k, n - 1)
+    if k < 1:
+        return torch.ones(n, device=points.device)
+    out = torch.empty(n, device=points.device)
+    # Each chunk builds a [chunk, N] distance matrix; bound it (~128 MB) so large clouds don't run out of GPU memory.
+    chunk = max(1, min(4096, max_elements // n))
+    for i in range(0, n, chunk):
         d = torch.cdist(points[i : i + chunk], points)
         out[i : i + chunk] = d.topk(k + 1, largest=False).values[:, 1:].mean(1)
     return out
@@ -132,7 +140,10 @@ def main() -> None:
     all_ids = list(range(len(frames)))
     if args.holdout_every > 0:
         test_ids = all_ids[:: args.holdout_every]
-        train_ids = [i for i in all_ids if i not in set(test_ids)]
+        held_out = set(test_ids)
+        train_ids = [i for i in all_ids if i not in held_out]
+        if not train_ids:
+            raise SystemExit(f"--holdout-every {args.holdout_every} leaves no frames to train on")
     else:
         test_ids, train_ids = [], all_ids
 

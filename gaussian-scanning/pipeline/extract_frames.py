@@ -14,6 +14,7 @@ timestamp_sec, sharpness, width, height).
 """
 import argparse
 import csv
+import os
 import shutil
 from pathlib import Path
 
@@ -91,6 +92,30 @@ def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list,
     return rows, {"source_kind": "video", "video_fps": round(video_fps, 3), "source_size": size}
 
 
+def jpeg_orientation(path: Path) -> int:
+    """EXIF orientation of a JPEG (1 = pixels stored upright), read from the header without decoding."""
+    with open(path, "rb") as fh:
+        data = fh.read(1 << 16)
+    if data[:2] != b"\xff\xd8":
+        return 1
+    i = 2
+    while i + 4 <= len(data) and data[i] == 0xFF:
+        marker, size = data[i + 1], int.from_bytes(data[i + 2 : i + 4], "big")
+        if marker == 0xE1 and data[i + 4 : i + 10] == b"Exif\0\0":
+            t = i + 10  # TIFF header: byte order, 42, offset of IFD0
+            order = "little" if data[t : t + 2] == b"II" else "big"
+            ifd = t + int.from_bytes(data[t + 4 : t + 8], order)
+            for k in range(int.from_bytes(data[ifd : ifd + 2], order)):
+                e = ifd + 2 + 12 * k
+                if int.from_bytes(data[e : e + 2], order) == 0x0112:
+                    return int.from_bytes(data[e + 8 : e + 10], order) or 1
+            return 1
+        if marker in (0xDA, 0xD9):  # image data starts: no EXIF before it
+            break
+        i += 2 + size
+    return 1
+
+
 def from_images(src: Path, out: Path, max_size: int) -> tuple[list, dict]:
     files = sorted(p for p in src.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
     if not files:
@@ -104,7 +129,9 @@ def from_images(src: Path, out: Path, max_size: int) -> tuple[list, dict]:
         size = size or img.shape[1::-1]
         name = f"{i:05d}_{f.stem}.jpg"
         resized = fit(img, max_size)
-        if resized is img and f.suffix.lower() in {".jpg", ".jpeg"}:
+        # Copy untouched JPEGs as-is, unless an EXIF rotation tag says to turn them:
+        # OpenCV applies it but COLMAP ignores it, so those are re-encoded upright.
+        if resized is img and f.suffix.lower() in {".jpg", ".jpeg"} and jpeg_orientation(f) == 1:
             shutil.copyfile(f, out / name)
         else:
             cv2.imwrite(str(out / name), resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -157,10 +184,14 @@ def main() -> None:
     if len(rows) < 3:
         raise SystemExit(f"only {len(rows)} usable frames; need many more for reconstruction")
 
-    with open(paths.frames_csv, "w", newline="") as fh:
+    # Write-then-rename: frames.csv may be hard-linked into other runs (run reuse),
+    # and rewriting it in place would change theirs too.
+    tmp = paths.frames_csv.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["file_name", "source", "timestamp_sec", "sharpness", "width", "height"])
         w.writerows(rows)
+    os.replace(tmp, paths.frames_csv)
 
     sizes = sorted({(int(r[4]), int(r[5])) for r in rows})
     progress(1.0, f"kept {len(rows)} frames")

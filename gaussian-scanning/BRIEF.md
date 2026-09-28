@@ -10,7 +10,7 @@ Turning a set of photos or a walked/orbited video into a viewable Gaussian splat
 
 1. **Capture**: sequential, overlapping photos, or video, of the object/room. No stereo or depth sensor needed.
 2. **Frames**: from video, the sharpest frame in each 1/fps-second window is kept, with its real timestamp (needed later to match frames to drone logs).
-3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Exhaustive matching for up to 400 frames (catches loop closures when a room scan returns to its start), then the global mapper (GLOMAP, now built into COLMAP), then undistortion to a pinhole camera.
+3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Feature extraction and matching run on the GPU; exhaustive matching for up to 400 frames (catches loop closures when a room scan returns to its start), then the global mapper (GLOMAP, now built into COLMAP; its bundle adjustment runs on the CPU), then undistortion to a pinhole camera.
 4. **Gaussian splat training**: gsplat fits hundreds of thousands of 3D Gaussians (position, size/orientation, opacity, colour) so that rendering them from each camera pose matches the photo. Standard 3DGS recipe: densification, L1 + SSIM loss, spherical harmonics up to degree 3. 7k iterations for a draft, 30k for full quality.
 5. **Export + viewer**: PLY (full precision) and SPZ (about 10x smaller) plus the camera path, opened in the app's own viewer.
 
@@ -75,4 +75,4 @@ Each run can hold out every Nth frame and report PSNR/SSIM on those unseen views
 
 ## 6. Status and next step
 
-Built and tested (Mip-NeRF 360 "room": all 311 frames posed, 30.8 dB held-out PSNR at 7k iterations; details in `app/BRIEF.md` section 6). Next, in order: capture a real handheld room scan with the phone/splat-camera candidates to learn capture technique (M1's "notes on capture quality"); the rosbag importer once the capture node writes bags (M5); metric scale (Tier 1); scenes + shared evaluation for M8.
+Built and tested (Mip-NeRF 360 "room": all 311 frames posed, 30.6–30.8 dB held-out PSNR at 7k iterations, about 3 min end to end since the 2026-09-28 speed pass; details in `app/BRIEF.md` section 6). Next, in order: capture a real handheld room scan with the phone/splat-camera candidates to learn capture technique (M1's "notes on capture quality"); the rosbag importer once the capture node writes bags (M5); metric scale (Tier 1); scenes + shared evaluation for M8.

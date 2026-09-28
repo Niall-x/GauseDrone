@@ -8,8 +8,8 @@ export function Layout() {
   const { data: sys } = usePoll(api.system, 5000);
 
   const nav = [
-    { to: "/", label: "Runs", icon: <Layers className="size-4" />, end: true },
-    { to: "/captures", label: "Captures", icon: <FolderInput className="size-4" /> },
+    { to: "/", label: "Runs", hint: "Generate & view splats", icon: <Layers className="size-4" />, end: true },
+    { to: "/captures", label: "Captures", hint: "Source videos & photos", icon: <FolderInput className="size-4" /> },
   ];
 
   return (
@@ -38,13 +38,16 @@ export function Layout() {
               end={n.end}
               className={({ isActive }) =>
                 clsx(
-                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
+                  "flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors",
                   isActive ? "bg-panel-2 text-fg" : "text-muted hover:bg-panel-2/60 hover:text-fg",
                 )
               }
             >
               {n.icon}
-              {n.label}
+              <span className="min-w-0">
+                <span className="block leading-tight">{n.label}</span>
+                <span className="block truncate text-[11px] leading-tight text-faint">{n.hint}</span>
+              </span>
             </NavLink>
           ))}
         </nav>

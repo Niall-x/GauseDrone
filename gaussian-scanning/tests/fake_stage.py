@@ -15,10 +15,15 @@ def main() -> None:
     p.add_argument("--value", type=int, default=1)
     p.add_argument("--sleep", type=float, default=0.0)
     p.add_argument("--fail", type=int, default=0)
+    p.add_argument("--garbage", type=int, default=0)
     args = p.parse_args()
 
     out = args.run_dir / args.name
     out.mkdir(parents=True, exist_ok=True)
+    if args.garbage:  # malformed protocol lines, e.g. from a buggy stage
+        print("@@progress not-a-number oops", flush=True)
+        print("@@result {truncated", flush=True)
+        print("@@result [1, 2]", flush=True)
     progress(0.5, "halfway")
     print("some ordinary log output")
     time.sleep(args.sleep)

@@ -26,10 +26,20 @@ file records the absolute project path and where `nix` lives, so rerun
 `install-service` after moving the checkout. On `systemctl stop`, systemd
 SIGTERMs the whole service; the runner records a stage killed that way as
 interrupted (resumable) rather than as a pipeline failure. `SPLAT_DATA_DIR` moves the
-data directory (default `data/`).
+data directory (default `data/`). `SPLAT_IMPORT_ROOTS` (`:`-separated, default `~`)
+limits which server folders *Import from a path* may read; hidden folders are always refused.
 
 gsplat compiles its CUDA kernels on first use (~2 min, once per machine;
-cached in `~/.cache/torch_extensions`).
+cached in `~/.cache/torch_extensions`). The flake builds COLMAP with CUDA
+(GPU feature extraction + matching). cache.nixos.org has no CUDA builds, so the
+first `nix develop` after a nixpkgs bump compiles it locally (a few minutes);
+its kernels target sm_89 (RTX 40xx), so add your GPU's capability in
+`flake.nix` for other cards, or run the SfM stage with *GPU features + matching* = 0.
+
+Uploads from the browser are resumable (`/api/uploads`): the file list is
+declared first, each file then arrives in chunks appended at an explicit
+offset, and the bytes on disk under `data/uploads/<id>/` are the record of
+progress, so a dropped connection or server restart costs at most one chunk.
 
 ## Test data
 

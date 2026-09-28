@@ -1,4 +1,5 @@
 import { Box, Eye, Layers } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, type Run } from "../api/client";
 import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner, StatusBadge } from "../components/ui";
@@ -14,7 +15,10 @@ export function runProgress(run: Run): { value: number; label: string } {
 }
 
 export function RunsPage() {
-  const { data: runs, error } = usePoll(api.runs, 2000);
+  // Poll fast only while something is queued or running; idle, a new run shows up within 10 s.
+  const [busy, setBusy] = useState(true);
+  const { data: runs, error } = usePoll(api.runs, busy ? 2000 : 10000);
+  useEffect(() => setBusy(!runs || runs.some((r) => r.status === "queued" || r.status === "running")), [runs]);
   const { data: captures } = usePoll(api.captures, 10000);
   const captureName = (id: string) => captures?.find((c) => c.id === id)?.name ?? id;
 

@@ -1,7 +1,7 @@
 import { Film, FolderOpen, Image as ImageIcon, Link2, Play, Trash2, Upload } from "lucide-react";
 import { useRef, useState, type DragEvent } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, uploadCapture, type Capture } from "../api/client";
+import { api, discardUpload, findResumable, listUploads, uploadFiles, type Capture, type Upload as PendingUpload } from "../api/client";
 import { Button, Card, EmptyState, ErrorBanner, Field, Input, PageHeader, ProgressBar, Spinner } from "../components/ui";
 import { formatBytes, formatDuration, timeAgo } from "../lib/format";
 import { usePoll } from "../lib/hooks";
@@ -82,23 +82,41 @@ function CaptureCard({ capture: c, onDelete }: { capture: Capture; onDelete: () 
   );
 }
 
+const uploadedBytes = (u: PendingUpload) => u.files.reduce((a, f) => a + f.received, 0);
+const uploadSize = (u: PendingUpload) => u.files.reduce((a, f) => a + f.size, 0);
+
 function UploadCard({ onDone }: { onDone: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [name, setName] = useState("");
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
+  const [resumable, setResumable] = useState<PendingUpload | undefined>();
+  const { data: unfinished, refresh: refreshUnfinished } = usePoll(listUploads, 0, false);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
 
   const pick = (list: FileList | null) => {
     const picked = Array.from(list ?? []).filter((f) => MEDIA.test(f.name));
     setFiles(picked);
+    setResumable(undefined);
     setError(picked.length ? null : "No images or videos in that selection");
+    if (picked.length)
+      findResumable(picked).then((u) => {
+        setResumable(u);
+        if (u) setName(u.name); // resuming keeps the name the upload was started with
+      }, () => {});
     if (picked.length && !name) {
       const rel = (picked[0] as File & { webkitRelativePath?: string }).webkitRelativePath;
       setName(rel ? rel.split("/")[0] : picked[0].name.replace(/\.[^.]+$/, ""));
     }
+  };
+
+  const discard = async (u: PendingUpload) => {
+    if (!confirm(`Discard the unfinished upload "${u.name}"?`)) return;
+    await discardUpload(u.id).catch((e) => setError((e as Error).message));
+    if (resumable?.id === u.id) setResumable(undefined);
+    refreshUnfinished();
   };
 
   const onDrop = (e: DragEvent) => {
@@ -113,14 +131,17 @@ function UploadCard({ onDone }: { onDone: () => void }) {
     setError(null);
     setProgress(0);
     try {
-      await uploadCapture(name || "capture", files, setProgress);
+      // Checked again here: an attempt that failed earlier in this session is resumable too.
+      await uploadFiles(name || "capture", files, setProgress, await findResumable(files));
       setFiles([]);
       setName("");
+      setResumable(undefined);
       onDone();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setProgress(null);
+      refreshUnfinished();
     }
   };
 
@@ -165,12 +186,35 @@ function UploadCard({ onDone }: { onDone: () => void }) {
         <Field label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. living room handheld" />
         </Field>
+        {resumable && progress == null && (
+          <p className="text-xs text-ok">
+            {formatBytes(uploadedBytes(resumable))} of {formatBytes(uploadSize(resumable))} of these files is already on the server; the upload continues from there.
+          </p>
+        )}
         {progress != null && <ProgressBar value={progress} />}
         <ErrorBanner error={error} />
-        <p className="text-xs text-faint">Large videos upload slowly through the browser; if the files are already on the server machine, import by path instead.</p>
+        <p className="text-xs text-faint">
+          Uploads survive dropped connections: if one stops, pick the same files and press Upload to continue. If the files are already on the server
+          machine, import by path instead.
+        </p>
         <Button variant="primary" disabled={!files.length} loading={progress != null} onClick={submit}>
-          Upload
+          {resumable ? "Resume upload" : "Upload"}
         </Button>
+        {!!unfinished?.length && progress == null && (
+          <div className="space-y-1 border-t border-line pt-3">
+            <div className="text-xs font-medium text-muted">Unfinished uploads</div>
+            {unfinished.map((u) => (
+              <div key={u.id} className="flex items-center justify-between gap-2 text-xs text-faint">
+                <span className="min-w-0 truncate" title={`Pick the same ${u.files.length} file(s) to resume`}>
+                  {u.name} · {formatBytes(uploadedBytes(u))} of {formatBytes(uploadSize(u))} · {u.files.length} file{u.files.length > 1 && "s"}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => discard(u)} icon={<Trash2 className="size-3.5" />}>
+                  Discard
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Card>
   );

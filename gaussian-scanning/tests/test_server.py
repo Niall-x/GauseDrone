@@ -24,6 +24,7 @@ def fake_stages() -> list[Stage]:
                 Param("value", "Value", "int", 1, min=0, max=100),
                 Param("sleep", "Sleep", "float", 0.0, min=0, max=60),
                 Param("fail", "Fail", "int", 0, min=0, max=1),
+                Param("garbage", "Garbage", "int", 0, min=0, max=1),
             ],
         )
 
@@ -37,6 +38,7 @@ def client(tmp_path, monkeypatch):
     stages.STAGE_BY_NAME.clear()
     stages.STAGE_BY_NAME.update({s.name: s for s in stages.STAGES})
     monkeypatch.setattr(main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(main, "IMPORT_ROOTS", [tmp_path.resolve()])
     with TestClient(main.app) as c:
         yield c
     stages.STAGES[:] = original
@@ -77,6 +79,33 @@ def test_import_rejects_mixed_or_missing(client, tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert client.post("/api/captures/import", json={"path": str(empty)}).status_code == 400
+
+
+def test_import_confined_to_roots(client, tmp_path, monkeypatch):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    cv2.imwrite(str(outside / "a.jpg"), np.zeros((8, 8, 3), np.uint8))
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    monkeypatch.setattr(main, "IMPORT_ROOTS", [allowed.resolve()])
+    assert client.post("/api/captures/import", json={"path": str(outside)}).status_code == 403
+    (allowed / "sneaky").symlink_to(outside)  # a symlink inside the root must not reach outside it
+    assert client.post("/api/captures/import", json={"path": str(allowed / "sneaky")}).status_code == 403
+    hidden = allowed / ".secret"
+    hidden.mkdir()
+    cv2.imwrite(str(hidden / "a.jpg"), np.zeros((8, 8, 3), np.uint8))
+    assert client.post("/api/captures/import", json={"path": str(hidden)}).status_code == 403
+    assert client.get("/api/captures").json() == []
+
+
+def test_import_validates_before_copying(client, tmp_path):
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    (mixed / "a.mp4").write_bytes(b"x")
+    (mixed / "b.mp4").write_bytes(b"x")
+    r = client.post("/api/captures/import", json={"path": str(mixed)})
+    assert r.status_code == 400 and "2 videos" in r.text
+    assert not any((tmp_path / "data" / "captures").iterdir())  # nothing was copied
 
 
 def test_run_completes(client, capture):
@@ -164,17 +193,63 @@ def test_file_access_confined_to_run(client, capture):
     assert client.get(f"/api/runs/{run['id']}/files/%2e%2e/%2e%2e/captures/{capture['id']}/capture.json").status_code == 404
 
 
+def jpeg(value=128) -> bytes:
+    return cv2.imencode(".jpg", np.full((30, 50, 3), value, np.uint8))[1].tobytes()
+
+
+def upload(client, name, files: dict[str, bytes], chunk=1000):
+    up = client.post("/api/uploads", json={"name": name, "files": [{"source": s, "size": len(b)} for s, b in files.items()]})
+    assert up.status_code == 200, up.text
+    up = up.json()
+    for i, data in enumerate(files.values()):
+        for off in range(0, len(data), chunk):
+            r = client.put(f"/api/uploads/{up['id']}/files/{i}?offset={off}", content=data[off : off + chunk])
+            assert r.status_code == 200, r.text
+    return up
+
+
 def test_upload_capture(client):
-    ok, jpg = cv2.imencode(".jpg", np.full((30, 50, 3), 128, np.uint8))
-    files = [("files", (f"frame{i}.jpg", jpg.tobytes(), "image/jpeg")) for i in range(2)]
-    r = client.post("/api/captures/upload", data={"name": "uploaded"}, files=files)
+    up = upload(client, "uploaded", {"frame0.jpg": jpeg(), "frame1.jpg": jpeg(90)})
+    r = client.post(f"/api/uploads/{up['id']}/finish")
     assert r.status_code == 200, r.text
     cap = r.json()
     assert cap["kind"] == "images" and cap["num_images"] == 2 and cap["origin"] == "upload"
+    assert client.get("/api/uploads").json() == []  # finished uploads are cleaned up
 
-    bad = client.post("/api/captures/upload", data={"name": "junk"}, files=[("files", ("notes.txt", b"hi", "text/plain"))])
+    # a set of files that can't be a capture is refused before any bytes are sent
+    bad = client.post("/api/uploads", json={"name": "junk", "files": [{"source": "notes.txt", "size": 2}]})
     assert bad.status_code == 400
-    assert len(client.get("/api/captures").json()) == 1  # the rejected upload left nothing behind
+    bad = client.post("/api/uploads", json={"name": "junk", "files": [{"source": "../../x.jpg", "size": 2}, {"source": "..", "size": 2}]})
+    assert bad.status_code == 400
+    assert len(client.get("/api/captures").json()) == 1 and client.get("/api/uploads").json() == []
+
+
+def test_upload_resumes(client):
+    data = jpeg() * 5
+    up = client.post("/api/uploads", json={"name": "big", "files": [{"source": "DCIM/big.jpg", "size": len(data)}]}).json()
+    put = lambda off, chunk: client.put(f"/api/uploads/{up['id']}/files/0?offset={off}", content=chunk)  # noqa: E731
+    assert put(0, data[:1000]).status_code == 200
+    assert client.post(f"/api/uploads/{up['id']}/finish").status_code == 400  # not complete yet
+    # the connection dropped after the server got the chunk; the client retries it
+    r = put(0, data[:1000])
+    assert r.status_code == 409 and r.json()["detail"]["received"] == 1000
+    assert put(5000, data[5000:]).status_code == 409  # can't skip ahead either
+    # the state survives a server restart: continue from where the server says
+    client.__exit__(None, None, None)
+    with TestClient(main.app) as c2:
+        (state,) = c2.get("/api/uploads").json()
+        assert state["id"] == up["id"] and state["files"][0]["received"] == 1000 and state["files"][0]["source"] == "DCIM/big.jpg"
+        assert c2.put(f"/api/uploads/{up['id']}/files/0?offset=1000", content=data[1000:]).status_code == 200
+        assert c2.put(f"/api/uploads/{up['id']}/files/0?offset={len(data)}", content=b"x").status_code == 400  # past the end
+        cap = c2.post(f"/api/uploads/{up['id']}/finish").json()
+        assert cap["files"] == ["big.jpg"] and cap["size_bytes"] == len(data)
+
+
+def test_upload_discard(client):
+    up = client.post("/api/uploads", json={"name": "x", "files": [{"source": "a.mp4", "size": 10}]}).json()
+    assert client.delete(f"/api/uploads/{up['id']}").status_code == 200
+    assert client.get("/api/uploads").json() == []
+    assert client.put(f"/api/uploads/{up['id']}/files/0?offset=0", content=b"x").status_code == 404
 
 
 def test_shutdown_interrupts_and_restart_recovers(client, capture):
@@ -198,9 +273,8 @@ def test_shutdown_interrupts_and_restart_recovers(client, capture):
 
 
 def test_upload_keeps_duplicate_names(client):
-    ok, jpg = cv2.imencode(".jpg", np.full((30, 50, 3), 128, np.uint8))
-    files = [("files", (name, jpg.tobytes(), "image/jpeg")) for name in ("DCIM/100/IMG_0001.jpg", "DCIM/101/IMG_0001.jpg")]
-    cap = client.post("/api/captures/upload", data={"name": "dup"}, files=files).json()
+    up = upload(client, "dup", {"DCIM/100/IMG_0001.jpg": jpeg(), "DCIM/101/IMG_0001.jpg": jpeg(60)})
+    cap = client.post(f"/api/uploads/{up['id']}/finish").json()
     assert cap["num_images"] == 2 and sorted(cap["files"]) == ["IMG_0001.jpg", "IMG_0001_2.jpg"]
 
 
@@ -218,3 +292,47 @@ def test_stage_killed_externally_is_interrupted(client, capture):
     run = wait(client, run["id"])
     assert run["status"] == "failed"
     assert "interrupted" in run["stages"][0]["error"]
+
+
+def test_malformed_protocol_lines_are_logged_not_fatal(client, capture):
+    run = wait(client, client.post("/api/runs", json={"capture_id": capture["id"], "config": {"a": {"garbage": 1}}}).json()["id"])
+    assert run["status"] == "done", run
+    assert run["stages"][0]["result"]["value"] == 1
+    log = client.get(f"/api/runs/{run['id']}/log/a").text
+    assert "@@progress not-a-number" in log and "@@result {truncated" in log
+
+
+def test_failed_finish_keeps_the_uploaded_bytes(client, monkeypatch):
+    up = upload(client, "keep", {"a.jpg": jpeg(), "b.jpg": jpeg(90)})
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk hiccup")
+    monkeypatch.setattr(main.store, "finalize_capture", boom)
+    with pytest.raises(RuntimeError):
+        client.post(f"/api/uploads/{up['id']}/finish")
+    (state,) = client.get("/api/uploads").json()
+    assert [f["received"] for f in state["files"]] == [f["size"] for f in state["files"]]  # nothing lost
+    assert client.get("/api/captures").json() == []
+    monkeypatch.undo()
+    assert client.post(f"/api/uploads/{up['id']}/finish").status_code == 200
+
+
+def test_upload_rejects_unusable_names(client):
+    for bad in ("x" * 250 + ".jpg", "a\0b.jpg", ".hidden.jpg"):
+        r = client.post("/api/uploads", json={"name": "n", "files": [{"source": bad, "size": 1}]})
+        assert r.status_code == 400, bad
+    assert client.get("/api/uploads").json() == []
+    assert not any((main.DATA_DIR / "uploads").iterdir())  # no half-created upload folders
+
+
+def test_run_files_revalidate(client, capture):
+    run = wait(client, client.post("/api/runs", json={"capture_id": capture["id"]}).json()["id"])
+    url = f"/api/runs/{run['id']}/files/a/marker.txt"
+    r = client.get(url)
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
+    same = client.get(url, headers={"If-None-Match": r.headers["etag"]})
+    assert same.status_code == 304 and same.content == b""  # unchanged: the browser keeps its copy
+    time.sleep(0.01)
+    (main.store.run_dir(run["id"]) / "a" / "marker.txt").write_text("value=2")  # e.g. a re-run rewrote it
+    changed = client.get(url, headers={"If-None-Match": r.headers["etag"]})
+    assert changed.status_code == 200 and changed.text == "value=2"
