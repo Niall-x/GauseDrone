@@ -179,6 +179,47 @@ ssh -L 8000:127.0.0.1:8000 you@gpu-machine
 and open http://127.0.0.1:8000 on the laptop. The app has no login, so
 don't expose it to a network directly.
 
+### 10. Sharing it with someone over Tailscale
+
+The app only listens on the machine itself (`127.0.0.1`). To let someone on
+your tailnet use it, including a friend you've shared the machine with,
+forward it with **Tailscale Serve**, which adds HTTPS and leaves the app itself
+unchanged.
+
+**On the machine running Splat Lab, once:**
+
+```sh
+sudo tailscale serve --bg 8000
+```
+
+It survives reboots. `tailscale serve status` shows it;
+`sudo tailscale serve --https=443 off` removes it. (Your tailnet needs MagicDNS
+and HTTPS certificates enabled, both in the Tailscale admin console under DNS.)
+
+**Everyone else opens** `https://<machine-name>.<tailnet-name>.ts.net`, the
+name `tailscale serve status` prints (for Niall's PC:
+https://nialls-pc.spangled-lungfish.ts.net). If that name doesn't resolve for
+a friend using a shared machine, `https://<the machine's 100.x.y.z address>`
+also works after clicking through a certificate-name warning.
+
+It works whenever the app is on (`systemctl --user start splat-app`); while
+it's off, visitors get a "bad gateway" page.
+
+Things to know before sharing:
+
+- **There is no login.** Anyone who can reach it can start, cancel and delete
+  runs, and *Import from a path* can read any folder on the host machine
+  (images in it become viewable through a run). Only share with people you
+  trust, and **never use Tailscale Funnel** (that makes it public).
+- **Sharing a machine exposes all its ports** to the other person by
+  default, not just this app. To limit a shared friend to Splat Lab, allow
+  only port 443 for them in your tailnet access-control policy (see Tailscale's
+  docs on sharing and access control).
+- Training runs on the host's GPU; the viewer runs in the visitor's browser
+  (it downloads the 10–35 MB splat). *Upload from this computer* sends files
+  from the visitor's machine, so big videos are slow over the internet: trim
+  them first. *Import from a path* only sees files on the host.
+
 ---
 
 For developers (running the pipeline steps by hand, tests, code layout), see
