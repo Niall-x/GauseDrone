@@ -25,6 +25,7 @@ Scope of v1 is deliberately small: **import, generate, view**. Drone rosbag impo
 | 11 | ~~Hand-managed native installs~~ → **Nix flake** pins COLMAP, Node, Python, the CUDA compiler; `uv.lock` pins the Python packages (torch, gsplat). Each run records git commit + tool versions | **Changed.** See `../README.md` |
 | 12 | Training uses **gsplat directly** (a compact trainer in `pipeline/train.py`), not nerfstudio | **New.** nerfstudio pins old torch and is the hardest part to install; gsplat is what it uses underneath anyway |
 | 13 | Stages reuse work: "New run from this" hard-links an earlier run's frames/poses into a new run (zero extra disk), and a run can be re-run in place from any stage with new settings | **New.** COLMAP is the slow part; most experiments only change training |
+| 14 | Turned on/off as a **systemd user service** (`splat-app install-service`, then `systemctl --user start/stop splat-app`), not a Docker image | **New.** The service just runs the launcher, which enters the pinned Nix shell, so there is no second environment to maintain. Docker would need the NVIDIA container toolkit (a system-level change) and a ~10 GB image duplicating the flake. Revisit Docker only if someone needs to run it without Nix (e.g. Windows) |
 
 ## 3. Pipeline stages (v1)
 
@@ -39,6 +40,7 @@ Stage protocol: `python -m pipeline.<stage> --run-dir DIR [--param value...]`, p
 
 ## 4. What exists
 
+- **Service**: `bin/splat-app install-service` writes a systemd user unit; `systemctl --user start|stop splat-app` turns the app on and off, logs go to the journal. Stopping mid-run marks the run interrupted and resumable (tested: stop during camera poses → restart → resume).
 - **Backend** (`app/server/`): stage registry, run/capture store, job runner, API, serves the built frontend. Runs can be cancelled, resumed, re-run from any stage, or started from another run's frames/poses. Stopping the server stops the running stage and marks it interrupted (resumable); queued runs survive restarts; after a hard crash, a leftover stage process is killed only if its command line still names that run.
 - **Frontend** (`app/frontend/`): runs list, new run (capture, preset, advanced settings, reuse), run detail (live stage progress, logs, metrics, loss curve, frames, downloads, config + environment), captures (upload by drag-drop/folder, import by path), full-screen viewer.
 - **Viewer**: orbit and fly controls; step through the capture cameras with the source photo alongside (a quick visual check of where the splat is weak); an overview from above with the capture path, camera frustums and a ceiling cutaway (a first, visual version of "coverage"); double-click to focus; screenshot; PLY download. "Up" is estimated from the capture cameras' horizontal axes, which stays correct for a drone camera pitched down.

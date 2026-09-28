@@ -202,3 +202,19 @@ def test_upload_keeps_duplicate_names(client):
     files = [("files", (name, jpg.tobytes(), "image/jpeg")) for name in ("DCIM/100/IMG_0001.jpg", "DCIM/101/IMG_0001.jpg")]
     cap = client.post("/api/captures/upload", data={"name": "dup"}, files=files).json()
     assert cap["num_images"] == 2 and sorted(cap["files"]) == ["IMG_0001.jpg", "IMG_0001_2.jpg"]
+
+
+def test_stage_killed_externally_is_interrupted(client, capture):
+    import os
+    import signal
+
+    run = client.post("/api/runs", json={"capture_id": capture["id"], "config": {"a": {"sleep": 30}}}).json()
+    for _ in range(100):
+        pid = client.get(f"/api/runs/{run['id']}").json()["stages"][0]["pid"]
+        if pid:
+            break
+        time.sleep(0.05)
+    os.killpg(pid, signal.SIGTERM)  # as `systemctl stop` would, before the server notices
+    run = wait(client, run["id"])
+    assert run["status"] == "failed"
+    assert "interrupted" in run["stages"][0]["error"]

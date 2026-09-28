@@ -193,7 +193,10 @@ class Runner:
             code = proc.wait()
 
         cancelled = self.cancel_requested
-        interrupted = self.shutting_down
+        # Killed by a signal we didn't send (e.g. `systemctl stop` signals the
+        # whole service at once, so the stage can die before shutdown() runs):
+        # also an interruption, resumable, not a pipeline error.
+        interrupted = self.shutting_down or (code in (-signal.SIGTERM, -signal.SIGINT, -signal.SIGKILL) and not cancelled)
 
         def finish(r: Run):
             s = r.stage(stage_name)

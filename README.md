@@ -45,16 +45,40 @@ run inside this shell (your prompt stays in `gaussian-scanning/`).
 
 ### 3. Start and stop the app
 
+**Recommended: as a background service** (a systemd *user* service, no root
+needed). Install it once, from the `gaussian-scanning/` folder:
+
+```sh
+bin/splat-app install-service
+```
+
+Then, from any terminal (no need for `nix develop`):
+
+| To | Run |
+|---|---|
+| Turn it on | `systemctl --user start splat-app` |
+| Turn it off | `systemctl --user stop splat-app` |
+| Check it's running | `systemctl --user status splat-app` |
+| Watch its log | `journalctl --user -u splat-app -f` |
+| Start it automatically when you log in | `systemctl --user enable splat-app` (undo with `disable`) |
+| Remove the service | `bin/splat-app uninstall-service` |
+
+(`bin/splat-app start` / `stop` / `status` / `logs` are shortcuts for the same.)
+Once it's on, open **http://127.0.0.1:8000**. The first start after an update
+also rebuilds the web interface, so give it up to a minute. To serve on a
+different port, reinstall with `bin/splat-app install-service --port 8001`.
+
+**Or in a terminal**, inside `nix develop`:
+
 ```sh
 splat-app
 ```
 
-Open **http://127.0.0.1:8000** in your browser. The first start also builds
-the web interface (about 30 s).
+and press **Ctrl-C** to stop.
 
-To stop it, press **Ctrl-C** in that terminal. If a run is in progress it is
-marked *interrupted*; press **Resume** on it next time and it continues from
-the step that was cut off.
+Either way, turning it off while a run is in progress marks that run
+*interrupted*; press **Resume** on it next time and it continues from the step
+that was cut off. Queued runs wait until the app is back on.
 
 ### 4. Try it on the test scene (about 10 minutes)
 
@@ -125,7 +149,8 @@ This checks the whole setup before you film anything.
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `splat-app` says the address is in use | Something already uses port 8000 (maybe an old Splat Lab). Stop it, or run `splat-app --port 8001`. |
+| `splat-app` says the address is in use | Something already uses port 8000, often the background service. `systemctl --user stop splat-app`, or run on another port with `splat-app --port 8001`. |
+| The service won't start | `journalctl --user -u splat-app -n 50` shows why. If you moved the project folder or changed how Nix is installed, rerun `bin/splat-app install-service`. |
 | "Camera poses" fails, or only some frames are posed | Too much blur, too little overlap or too many blank surfaces. Check the log (the **log** link on that step). Refilm more slowly; or in Advanced settings raise *Frames per second* to 3–4. |
 | The splat is blurry or full of floating blobs | Usually the capture: blur, too few viewpoints, or areas seen from only one side. The Standard preset helps a little; better filming helps a lot. |
 | Training fails with "out of memory" | Lower *Max image size* (e.g. 1200) in Advanced settings and re-run. |

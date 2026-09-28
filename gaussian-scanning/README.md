@@ -18,8 +18,14 @@ dev shell, it enters it itself):
 | `splat-app dev` | API with auto-reload on :8000 + Vite dev server on :5173 (open :5173) |
 | `splat-app build` | Rebuild the frontend |
 | `splat-app gen-api` | Regenerate `app/frontend/src/api/schema.d.ts` after changing backend models |
+| `splat-app install-service` / `uninstall-service` | Write/remove a systemd user unit (`~/.config/systemd/user/splat-app.service`) that runs `splat-app serve` |
+| `splat-app start` / `stop` / `restart` / `status` / `logs` | Shortcuts for `systemctl --user … splat-app` / `journalctl` |
 
-`--host` / `--port` work with `serve` and `dev`. `SPLAT_DATA_DIR` moves the
+`--host` / `--port` work with `serve`, `dev` and `install-service`. The unit
+file records the absolute project path and where `nix` lives, so rerun
+`install-service` after moving the checkout. On `systemctl stop`, systemd
+SIGTERMs the whole service; the runner records a stage killed that way as
+interrupted (resumable) rather than as a pipeline failure. `SPLAT_DATA_DIR` moves the
 data directory (default `data/`).
 
 gsplat compiles its CUDA kernels on first use (~2 min, once per machine;

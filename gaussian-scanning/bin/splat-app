@@ -6,6 +6,11 @@
 #   splat-app build      (re)build the frontend
 #   splat-app gen-api    regenerate the frontend's API types from the backend models
 #
+#   Background service (systemd user unit, no root needed):
+#   splat-app install-service [--port P]   write ~/.config/systemd/user/splat-app.service
+#   splat-app start | stop | restart | status | logs
+#   splat-app uninstall-service
+#
 # Options for serve/dev: --host HOST (default 127.0.0.1), --port PORT (default 8000).
 # There is no login, so only bind beyond localhost on a trusted network; to use a
 # remote GPU machine, prefer an SSH tunnel: ssh -L 8000:127.0.0.1:8000 gpu-box
@@ -13,11 +18,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND="$ROOT/app/frontend"
-
-# Everything needs the dev shell (COLMAP, CUDA toolchain, venv). Enter it if we're not in it.
-if [[ -z "${CUDA_HOME:-}" || -z "${VIRTUAL_ENV:-}" ]]; then
-  exec nix develop "$ROOT" --command "$0" "$@"
-fi
+SERVICE=splat-app
+UNIT_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$SERVICE.service"
 
 cmd="${1:-serve}"
 [[ $# -gt 0 ]] && shift
@@ -30,6 +32,64 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
+
+# --- service management: plain systemctl, no dev shell needed ---
+
+install_service() {
+  local nix_bin
+  nix_bin="$(dirname "$(command -v nix)")" || { echo "nix not found on PATH" >&2; exit 1; }
+  mkdir -p "$(dirname "$UNIT_FILE")"
+  cat > "$UNIT_FILE" <<EOF
+# Written by '$ROOT/bin/splat-app install-service'; rerun that to regenerate.
+[Unit]
+Description=Splat Lab (GauseDrone Gaussian splat app) on http://$HOST:$PORT
+
+[Service]
+Type=simple
+WorkingDirectory=$ROOT
+# User units get a minimal PATH; nix enters the pinned dev shell, which supplies
+# everything else. nvidia-smi lives in /run/current-system/sw/bin on NixOS.
+Environment=PATH=$nix_bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$ROOT/bin/splat-app serve --host $HOST --port $PORT
+# SIGTERM stops the running pipeline stage; its run is marked interrupted and
+# can be resumed from the app.
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  echo "installed $UNIT_FILE"
+  echo "  start:            systemctl --user start $SERVICE    (then open http://$HOST:$PORT)"
+  echo "  stop:             systemctl --user stop $SERVICE"
+  echo "  start at login:   systemctl --user enable $SERVICE"
+  echo "  logs:             journalctl --user -u $SERVICE -f"
+}
+
+case "$cmd" in
+  install-service) install_service; exit ;;
+  uninstall-service)
+    systemctl --user disable --now "$SERVICE" 2>/dev/null || true
+    rm -f "$UNIT_FILE"
+    systemctl --user daemon-reload
+    echo "removed $UNIT_FILE"
+    exit
+    ;;
+  start | stop | restart | status)
+    [[ -f "$UNIT_FILE" ]] || { echo "service not installed; run: $0 install-service" >&2; exit 1; }
+    systemctl --user "$cmd" "$SERVICE"
+    [[ "$cmd" == start || "$cmd" == restart ]] && echo "Splat Lab starting (first start can take ~30 s): $(grep -o 'http://[^ ]*' "$UNIT_FILE" | head -1)"
+    exit
+    ;;
+  logs) exec journalctl --user -u "$SERVICE" -f ;;
+esac
+
+# Everything else needs the dev shell (COLMAP, CUDA toolchain, venv). Enter it if we're not in it.
+if [[ -z "${CUDA_HOME:-}" || -z "${VIRTUAL_ENV:-}" ]]; then
+  exec nix develop "$ROOT" --command "$0" "$cmd" --host "$HOST" --port "$PORT"
+fi
 
 ensure_node_modules() {
   [[ -d "$FRONTEND/node_modules" ]] || (cd "$FRONTEND" && npm ci)
@@ -64,5 +124,5 @@ case "$cmd" in
     python scripts/dump_openapi.py
     (cd "$FRONTEND" && npm run gen:api)
     ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac
