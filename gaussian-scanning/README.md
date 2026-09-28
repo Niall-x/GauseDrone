@@ -4,45 +4,26 @@ Capture → camera poses (COLMAP) → Gaussian splat (gsplat) → web viewer, pl
 **Splat Lab**, the local app that runs and tracks it. Design notes are in
 [`BRIEF.md`](BRIEF.md) (pipeline) and [`app/BRIEF.md`](app/BRIEF.md) (app).
 
-## Requirements
+**To install and use the app, follow the guide in the
+[top-level README](../README.md).** This page is the developer reference.
 
-- Nix with flakes enabled
-- An NVIDIA GPU + driver (tested: RTX 4070 Ti Super, driver 595). The CUDA
-  toolkit itself comes from the flake.
+## Launcher
 
-## Run it
+`bin/splat-app` (on `PATH` inside `nix develop`; also works from outside the
+dev shell, it enters it itself):
 
-```sh
-cd gaussian-scanning
-nix develop            # first time: fetches COLMAP/Node/CUDA compiler, installs Python deps (~5 GB)
-splat-app              # builds the frontend if needed, serves http://127.0.0.1:8000
-```
+| Command | What it does |
+|---|---|
+| `splat-app` | Build the frontend if sources changed, serve everything on http://127.0.0.1:8000 |
+| `splat-app dev` | API with auto-reload on :8000 + Vite dev server on :5173 (open :5173) |
+| `splat-app build` | Rebuild the frontend |
+| `splat-app gen-api` | Regenerate `app/frontend/src/api/schema.d.ts` after changing backend models |
 
-`bin/splat-app` also works from outside the dev shell; it enters it itself.
-Other commands: `splat-app dev` (auto-reload API on :8000 + Vite on :5173),
-`splat-app build`, `splat-app gen-api` (regenerate frontend API types after
-changing backend models).
+`--host` / `--port` work with `serve` and `dev`. `SPLAT_DATA_DIR` moves the
+data directory (default `data/`).
 
-The first training run compiles gsplat's CUDA kernels (~2 min, once; cached
-in `~/.cache/torch_extensions`).
-
-Then: **Captures** → upload a video/photos or import a path on this machine →
-**Run** → pick *Draft* (7k iterations, a few minutes) or *Standard* (30k) →
-**Open viewer** when it finishes.
-
-The viewer: drag to orbit (double-click a surface to orbit around it), or
-switch to fly mode (WASD, Q/E down/up). **[ ]** step through the capture's
-cameras, optionally showing the source photo alongside the render (a quick way
-to see where the splat is weak). **O** gives an overview from above with the
-capture path, camera frustums and a ceiling cutaway, for judging coverage.
-
-Stopping the server (Ctrl-C) stops the running stage; that run shows as
-interrupted and **Resume** continues from the stage that was cut off. Queued
-runs stay queued across restarts.
-
-Using a GPU machine remotely: run `splat-app` there and tunnel,
-`ssh -L 8000:127.0.0.1:8000 gpu-box`, then open http://127.0.0.1:8000
-locally. There is no login, so don't bind it to a public interface.
+gsplat compiles its CUDA kernels on first use (~2 min, once per machine;
+cached in `~/.cache/torch_extensions`).
 
 ## Test data
 

@@ -1,6 +1,6 @@
-# Autonomous Gaussian Splatting Drone: Project Brief (DRAFT v0.1)
+# Autonomous Gaussian Splatting Drone: Project Brief (DRAFT v0.2)
 
-Status: early concept. Everything here is a proposal to argue about. Open questions are at the end.
+Status: early concept; the drone side is still a proposal to argue about. **M1 (splat pipeline, no drone) is built**: Splat Lab turns a video or photo set into a Gaussian splat and shows it in a web viewer (section 6a; how to run it: [`README.md`](README.md)). Open questions are at the end.
 
 ## 1. Idea in one paragraph
 
@@ -84,7 +84,7 @@ Stream B needs no drone to start (handheld and simulated scans). Stream C starts
 
 | # | Milestone | Owner | Demonstrable output |
 |---|---|---|---|
-| M1 | Splat pipeline, no drone | B | Handheld scan to splat in the web viewer, plus notes on capture quality |
+| M1 | Splat pipeline, no drone | B | Handheld scan to splat in the web viewer, plus notes on capture quality. **Pipeline + app built and tested on a public dataset; still needs our own handheld scans and the capture-quality notes** |
 | M2 | Simulation + ROS 2 workspace | C | Simulated drone flying waypoints in Gazebo via ROS 2; simulated room scan |
 | M3 | Hardware bring-up | A | Airframe flies stably, companion computer connected, telemetry and rosbag logging |
 | M4 | GPS-denied hold | A | VIO feeding ArduPilot, stable indoor loiter (fixes the Droneye failure mode) |
@@ -96,7 +96,19 @@ Stream B needs no drone to start (handheld and simulated scans). Stream C starts
 
 If we stop after M6, we still have a complete result.
 
-M1's detailed plan lives in `gaussian-scanning/BRIEF.md`; the app that runs that pipeline and views the results (Splat Lab, built) is in `gaussian-scanning/app/BRIEF.md`.
+## 6a. Current state: M1 and Splat Lab
+
+- **Pipeline** (`gaussian-scanning/pipeline/`): frame extraction (sharpest frame per interval, real video timestamps) → COLMAP 4 camera poses (global mapper) → gsplat training → export (PLY, compressed SPZ, camera path). Design: [`gaussian-scanning/BRIEF.md`](gaussian-scanning/BRIEF.md).
+- **Splat Lab** (`gaussian-scanning/app/`): local web app that imports captures, runs and tracks the pipeline (progress, logs, cancel/resume, reuse of camera poses between runs, a reproducible record per run) and includes a viewer with the capture path, per-camera photo comparison and a top-down coverage view. Design: [`gaussian-scanning/app/BRIEF.md`](gaussian-scanning/app/BRIEF.md). **How to run it: [`README.md`](README.md).**
+- **Environment:** Nix flake + locked Python packages, so both of us get identical tool versions. Trains on an RTX 4070 Ti Super.
+- **Tested** on the Mip-NeRF 360 "room" scene: 30.7 dB held-out PSNR in ~7 min end to end (Draft), 32.1 dB at full quality, in line with published 3DGS results.
+
+What M1 still needs: **real handheld scans of our own rooms** and short notes on what capture technique works (the "notes on capture quality" deliverable). These feed straight into choosing the splat camera (open question 4) and the drone's flight speed.
+
+What later milestones need from the app (designed, not built; details in the app brief):
+- **M5:** import of the drone's rosbag (images + VIO poses), with the VIO poses used as priors for COLMAP.
+- **Metric scale** (real metres), for measurements and the coverage metric.
+- **M8:** a shared test capture per room so autonomous, manual and lawnmower scans are scored on the same views. Scoring each run on its own held-out frames, as now, can't compare capture strategies fairly.
 
 ## 7. Risks
 
@@ -116,7 +128,7 @@ Outdoor tests with a camera drone over 100g need a CAA Operator ID. Check curren
 
 ## 8. Rough hardware list (to be costed)
 
-Flight controller (we have ArduPilot experience), frame, motors and ESCs, battery; Pi 5 or Jetson Orin Nano; depth/ToF camera; fast-shutter splat camera; optical flow and rangefinder as a backup (from Droneye); safety net and props guards; desktop GPU for training (whatever we have access to).
+Flight controller (we have ArduPilot experience), frame, motors and ESCs, battery; Pi 5 or Jetson Orin Nano; depth/ToF camera; fast-shutter splat camera; optical flow and rangefinder as a backup (from Droneye); safety net and props guards; desktop GPU for training (have: RTX 4070 Ti Super, 16 GB).
 
 ## 9. Open questions for us to decide
 
@@ -127,6 +139,6 @@ Flight controller (we have ArduPilot experience), frame, motors and ESCs, batter
 5. ~~**Splat framework:** nerfstudio vs standalone gsplat? What GPU do we have for training?~~ **Decided:** COLMAP 4 + gsplat directly; trains on an RTX 4070 Ti Super (16 GB). See `gaussian-scanning/BRIEF.md`.
 6. **Test space:** where can we legally and safely fly indoors, and how big is it?
 7. **Time and budget:** how many hours per week each, what deadline, and what can we spend?
-8. **Is the friend's stream big enough?** Should the viewer/UI include anything more interesting, such as an annotated scan, before/after comparison or coverage heatmap?
+8. **Is the friend's stream big enough?** Should the viewer/UI include anything more interesting, such as an annotated scan, before/after comparison or coverage heatmap? *(Now built: capture-path overlay, per-camera photo comparison and a top-down cutaway view. Still open: a quantitative coverage heatmap and side-by-side run comparison, which come with M8.)*
 9. **Ground rover fallback:** do we want one as a backup if the drone slips?
 10. **Do we still want this project,** or one of the alternatives we were discussing?
