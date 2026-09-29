@@ -15,6 +15,8 @@ public). If it's been shared with you:
    (or, if that name doesn't resolve, `https://<the machine's 100.x.y.z
    address>` after clicking through a certificate-name warning).
 
+btw i didnt pick the url and i refuse to change it. also a thing is currently running to test a high rez scan and could take till tmrw
+
 No login. Anyone with the link can start, cancel and delete runs. Uploading
 big videos from your own machine over the internet is slow — trim them
 first, or ask for a path import on the host instead. If the page shows "bad
