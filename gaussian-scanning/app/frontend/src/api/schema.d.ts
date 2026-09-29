@@ -445,7 +445,7 @@ export interface components {
              * @default queued
              * @enum {string}
              */
-            status: "queued" | "running" | "done" | "failed" | "cancelled";
+            status: "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
             /** Config */
             config: {
                 [key: string]: {

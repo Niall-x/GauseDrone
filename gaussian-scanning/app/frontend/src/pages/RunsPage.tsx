@@ -2,7 +2,7 @@ import { AlertTriangle, Box, Eye, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, type Run } from "../api/client";
-import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner, StatusBadge, stageWarnings } from "../components/ui";
+import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner, StatusBadge, VERDICT_STYLE, runQuality, stageWarnings } from "../components/ui";
 import { formatDuration, timeAgo } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 
@@ -59,7 +59,10 @@ export function RunsPage() {
                 const train = run.stages.find((s) => s.name === "train")?.result as Record<string, number> | undefined;
                 const sfm = run.stages.find((s) => s.name === "sfm")?.result as Record<string, number> | undefined;
                 const psnr = train?.test_psnr ?? train?.train_psnr;
-                const warnings = run.stages.flatMap((s) => (s.status === "done" ? stageWarnings(s) : []));
+                const { verdict, issues } = runQuality(run);
+                // Runs from before structured issues reported plain warning strings.
+                const legacy = run.stages.flatMap((s) => (s.status === "done" ? stageWarnings(s) : []));
+                const flag = verdict && verdict !== "good" ? VERDICT_STYLE[verdict] : null;
                 return (
                   <tr key={run.id} className="bg-bg transition-colors hover:bg-panel">
                     <td className="px-4 py-3">
@@ -67,10 +70,19 @@ export function RunsPage() {
                         <Link to={`/runs/${run.id}`} className="truncate font-medium hover:text-accent">
                           {run.name}
                         </Link>
-                        {warnings.length > 0 && (
-                          <span title={warnings.join("\n\n")} className="shrink-0 text-warn">
-                            <AlertTriangle className="size-3.5" />
+                        {flag ? (
+                          <span
+                            title={`${flag.label}: ${flag.text}\n\n${issues.filter((i) => i.severity !== "info").map((i) => i.title).join("\n")}`}
+                            className={`shrink-0 [&_svg]:size-3.5 ${flag.cls.split(" ")[0]}`}
+                          >
+                            {flag.icon}
                           </span>
+                        ) : (
+                          legacy.length > 0 && (
+                            <span title={legacy.join("\n\n")} className="shrink-0 text-warn">
+                              <AlertTriangle className="size-3.5" />
+                            </span>
+                          )
                         )}
                       </div>
                       <div className="truncate text-xs text-faint">

@@ -110,11 +110,16 @@ def estimate_up(c2w: np.ndarray) -> np.ndarray:
     return up if up @ mean_up >= 0 else -up
 
 
-def view_info(model_dir: Path) -> dict:
+def view_info(model_dir: Path, excluded: set[str] = frozenset()) -> dict:
+    """Viewer metadata. Cameras in `excluded` (wrongly placed, left out of
+    training) are kept in the camera list, marked, but don't steer up/centre."""
     cameras, images, (xyz, _, _) = read_model(model_dir)
     c2w = np.stack([im.cam_to_world for im in images])
-    centers = c2w[:, :3, 3]
-    up = estimate_up(c2w)
+    kept = np.array([im.name not in excluded for im in images])
+    if not kept.any():
+        kept[:] = True
+    centers = c2w[kept, :3, 3]
+    up = estimate_up(c2w[kept])
     cam0 = images[0]
     K = cameras[cam0.camera_id].K
     fov_y = 2 * np.degrees(np.arctan(cameras[cam0.camera_id].height / (2 * K[1, 1])))
@@ -137,6 +142,7 @@ def view_info(model_dir: Path) -> dict:
                 "position": c[:3, 3].round(5).tolist(),
                 "forward": c[:3, 2].round(5).tolist(),
                 "up": (-c[:3, 1]).round(5).tolist(),
+                **({"excluded": True} if im.name in excluded else {}),
             }
             for im, c in zip(images, c2w)
         ],
@@ -163,7 +169,9 @@ def main() -> None:
     progress(0.6, "writing SPZ")
     write_spz(out / "splat.spz", s, sh_degree)
     progress(0.9, "writing view.json")
-    (out / "view.json").write_text(json.dumps(view_info(paths.sparse_txt)))
+    quality = paths.sfm / "quality.json"
+    excluded = set(json.loads(quality.read_text()).get("excluded", [])) if quality.exists() else set()
+    (out / "view.json").write_text(json.dumps(view_info(paths.sparse_txt, excluded)))
 
     progress(1.0, "exported")
     result(

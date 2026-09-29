@@ -1246,6 +1246,7 @@
             "enum": [
               "queued",
               "running",
+              "paused",
               "done",
               "failed",
               "cancelled"

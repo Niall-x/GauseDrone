@@ -25,6 +25,7 @@ def fake_stages() -> list[Stage]:
                 Param("sleep", "Sleep", "float", 0.0, min=0, max=60),
                 Param("fail", "Fail", "int", 0, min=0, max=1),
                 Param("garbage", "Garbage", "int", 0, min=0, max=1),
+                Param("unreliable", "Unreliable", "int", 0, min=0, max=1),
             ],
         )
 
@@ -336,3 +337,21 @@ def test_run_files_revalidate(client, capture):
     (main.store.run_dir(run["id"]) / "a" / "marker.txt").write_text("value=2")  # e.g. a re-run rewrote it
     changed = client.get(url, headers={"If-None-Match": r.headers["etag"]})
     assert changed.status_code == 200 and changed.text == "value=2"
+
+
+def test_unreliable_result_pauses_before_next_stage(client, capture):
+    run = client.post("/api/runs", json={"capture_id": capture["id"], "config": {"b": {"unreliable": 1}}}).json()
+    run = wait(client, run["id"])
+    assert run["status"] == "paused"
+    assert [s["status"] for s in run["stages"]] == ["done", "done", "pending"]
+    # "train anyway": resuming carries on without re-checking the paused stage
+    assert client.post(f"/api/runs/{run['id']}/resume").status_code == 200
+    run = wait(client, run["id"])
+    assert run["status"] == "done"
+
+
+def test_paused_run_can_be_cancelled(client, capture):
+    run = client.post("/api/runs", json={"capture_id": capture["id"], "config": {"b": {"unreliable": 1}}}).json()
+    assert wait(client, run["id"])["status"] == "paused"
+    r = client.post(f"/api/runs/{run['id']}/cancel")
+    assert r.status_code == 200 and r.json()["status"] == "cancelled"

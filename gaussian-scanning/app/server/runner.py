@@ -3,6 +3,11 @@ bottleneck), each stage a subprocess whose stdout goes to logs/<stage>.log.
 
 Stage CLIs report progress with `@@progress` / `@@result` lines (see
 pipeline/common.py). Cancelling kills the stage's whole process group.
+
+A stage whose result says `"verdict": "unreliable"` pauses the run after it
+(status "paused"): the camera poses can't be trusted, so training on them would
+waste the GPU. Resuming carries on from the next stage without re-checking,
+which is how the user says "train anyway".
 """
 import json
 import os
@@ -129,6 +134,10 @@ class Runner:
             if not ok:
                 status = "cancelled" if self.cancel_requested and not self.shutting_down else "failed"
                 self.store.update_run(run_id, lambda r: setattr(r, "status", status))
+                return
+            verdict = self.store.get_run(run_id).stage(stage_state.name).result.get("verdict")
+            if verdict == "unreliable" and stage_state is not run.stages[-1]:
+                self.store.update_run(run_id, lambda r: setattr(r, "status", "paused"))
                 return
         self.store.update_run(run_id, lambda r: setattr(r, "status", "done"))
 

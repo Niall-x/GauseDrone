@@ -1,7 +1,7 @@
 // Shared building blocks; every screen is composed from these so the app
 // stays visually consistent.
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle, Ban, Clock } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle, Ban, Clock, PauseCircle, ShieldAlert } from "lucide-react";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import type { RunStatus, StageStatus } from "../api/client";
 
@@ -77,12 +77,13 @@ const STATUS_STYLE: Record<string, { cls: string; icon: ReactNode; label: string
   done: { cls: "text-ok border-ok/30 bg-ok/10", icon: <CheckCircle2 className="size-3.5" />, label: "Done" },
   failed: { cls: "text-bad border-bad/30 bg-bad/10", icon: <XCircle className="size-3.5" />, label: "Failed" },
   cancelled: { cls: "text-warn border-warn/30 bg-warn/10", icon: <Ban className="size-3.5" />, label: "Cancelled" },
+  paused: { cls: "text-warn border-warn/30 bg-warn/10", icon: <PauseCircle className="size-3.5" />, label: "Needs attention" },
 };
 
 export function StatusBadge({ status }: { status: RunStatus | StageStatus }) {
   const s = STATUS_STYLE[status] ?? STATUS_STYLE.pending;
   return (
-    <span className={clsx("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium", s.cls)}>
+    <span className={clsx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium", s.cls)}>
       {s.icon}
       {s.label}
     </span>
@@ -96,7 +97,7 @@ export function StatusIcon({ status, className }: { status: StageStatus; classNa
 
 export function ProgressBar({ value, status, className }: { value: number; status?: StageStatus | RunStatus; className?: string }) {
   const color =
-    status === "failed" ? "bg-bad" : status === "cancelled" ? "bg-warn" : status === "done" ? "bg-ok" : "bg-accent";
+    status === "failed" ? "bg-bad" : status === "cancelled" || status === "paused" ? "bg-warn" : status === "done" ? "bg-ok" : "bg-accent";
   return (
     <div className={clsx("h-1.5 overflow-hidden rounded-full bg-line", className)}>
       <div className={clsx("h-full rounded-full transition-[width] duration-500", color)} style={{ width: `${Math.round(value * 100)}%` }} />
@@ -152,7 +153,54 @@ export function ErrorBanner({ error, className }: { error?: Error | string | nul
   );
 }
 
-/** Problems a stage reported in its result (`warnings`), e.g. unreliable camera poses. */
+/** A problem a stage found in the capture (see pipeline/quality.py). */
+export interface Issue {
+  kind: string;
+  severity: "info" | "warning" | "error";
+  title: string;
+  detail: string;
+  fix: string;
+  ranges: { start: number | null; end: number | null; first: string; last: string; frames: number }[];
+  frames: number;
+}
+export type Verdict = "good" | "gaps" | "unreliable";
+
+type WithResult = { status?: string; result?: Record<string, unknown> | null };
+
+export function stageIssues(stage?: WithResult): Issue[] {
+  const i = stage?.status === "done" ? stage.result?.issues : null;
+  return Array.isArray(i) ? (i as Issue[]) : [];
+}
+
+/** The run's verdict comes from the camera-pose check; issues from every finished stage, most severe first. */
+export function runQuality(run: { stages: (WithResult & { name: string })[] }): { verdict: Verdict | null; issues: Issue[] } {
+  const sfm = run.stages.find((s) => s.name === "sfm");
+  const verdict = sfm?.status === "done" ? ((sfm.result?.verdict as Verdict | undefined) ?? null) : null;
+  const order = { error: 0, warning: 1, info: 2 };
+  const issues = run.stages.flatMap((s) => stageIssues(s)).sort((a, b) => order[a.severity] - order[b.severity]);
+  return { verdict, issues };
+}
+
+export const VERDICT_STYLE: Record<Verdict, { cls: string; icon: ReactNode; label: string; text: string }> = {
+  good: { cls: "text-ok border-ok/30 bg-ok/10", icon: <CheckCircle2 className="size-4" />, label: "Good",
+    text: "The camera positions look right for the whole capture." },
+  gaps: { cls: "text-warn border-warn/30 bg-warn/10", icon: <AlertTriangle className="size-4" />, label: "Usable, with gaps",
+    text: "Parts of the capture are missing or were left out; the rest can be trusted." },
+  unreliable: { cls: "text-bad border-bad/30 bg-bad/10", icon: <ShieldAlert className="size-4" />, label: "Unreliable",
+    text: "Too many camera positions look wrong to trust the result." },
+};
+
+export function VerdictBadge({ verdict }: { verdict: Verdict }) {
+  const v = VERDICT_STYLE[verdict];
+  return (
+    <span className={clsx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium [&_svg]:size-3.5", v.cls)} title={v.text}>
+      {v.icon}
+      {v.label}
+    </span>
+  );
+}
+
+/** Problems a stage reported as plain strings (`warnings`, runs from before issues existed). */
 export function stageWarnings(stage?: { result?: Record<string, unknown> | null }): string[] {
   const w = stage?.result?.warnings;
   return Array.isArray(w) ? w.filter((x): x is string => typeof x === "string") : [];

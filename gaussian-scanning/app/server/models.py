@@ -7,7 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 StageStatus = Literal["pending", "running", "done", "failed", "cancelled"]
-RunStatus = Literal["queued", "running", "done", "failed", "cancelled"]
+# paused: a stage judged its own result unreliable (result "verdict"), so the
+# run stopped before spending GPU time on it; resuming continues regardless.
+RunStatus = Literal["queued", "running", "paused", "done", "failed", "cancelled"]
 CaptureKind = Literal["video", "images"]
 
 

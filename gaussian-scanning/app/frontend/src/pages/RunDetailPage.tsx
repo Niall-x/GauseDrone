@@ -1,11 +1,12 @@
 import clsx from "clsx";
-import { ChevronRight, Copy, Download, Eye, RotateCcw, Square, Terminal, Trash2, Wrench } from "lucide-react";
+import { ChevronRight, Copy, Download, Eye, PauseCircle, Play, RotateCcw, Square, Terminal, Trash2, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, type Run, type StageConfig, type StageDef, type StageState } from "../api/client";
+import { CaptureReport } from "../components/CaptureReport";
 import { LossChart } from "../components/LossChart";
 import { StageParams, configFrom } from "../components/StageParams";
-import { Button, Card, ErrorBanner, Field, PageHeader, ProgressBar, Select, Spinner, Stat, StatusBadge, StatusIcon, WarningList, stageWarnings } from "../components/ui";
+import { Button, Card, ErrorBanner, Field, PageHeader, ProgressBar, Select, Spinner, Stat, StatusBadge, StatusIcon, VerdictBadge, WarningList, runQuality, stageWarnings } from "../components/ui";
 import { elapsed, formatDuration, formatNumber, timeAgo } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 
@@ -20,6 +21,7 @@ export function RunDetailPage() {
   const { data: capture } = usePoll(() => (run ? api.capture(run.capture_id) : Promise.resolve(undefined)), 0, false, [run?.capture_id]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showRerun, setShowRerun] = useState(false);
+  const [rerunFrom, setRerunFrom] = useState("train");
 
   useEffect(() => setActive(!run || ACTIVE.includes(run.status)), [run?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -47,6 +49,8 @@ export function RunDetailPage() {
   const sfm = r("sfm");
   const train = r("train");
   const exp = r("export");
+  const { verdict } = runQuality(run);
+  const paused = run.status === "paused";
 
   return (
     <>
@@ -55,6 +59,7 @@ export function RunDetailPage() {
         subtitle={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <StatusBadge status={run.status} />
+            {verdict && <VerdictBadge verdict={verdict} />}
             <span>
               from{" "}
               <Link to="/captures" className="text-fg hover:text-accent">
@@ -79,13 +84,13 @@ export function RunDetailPage() {
                 Cancel
               </Button>
             )}
-            {!isActive && run.status !== "done" && (
+            {!isActive && run.status !== "done" && !paused && (
               <Button icon={<RotateCcw className="size-4" />} onClick={() => act(() => api.resumeRun(run.id))}>
                 Resume
               </Button>
             )}
             {!isActive && (
-              <Button icon={<Wrench className="size-4" />} onClick={() => setShowRerun((v) => !v)}>
+              <Button icon={<Wrench className="size-4" />} onClick={() => { setRerunFrom("train"); setShowRerun((v) => !v); }}>
                 Re-run…
               </Button>
             )}
@@ -112,7 +117,31 @@ export function RunDetailPage() {
       />
       <ErrorBanner error={actionError} className="mb-4" />
 
-      {showRerun && <RerunPanel run={run} stages={info.stages} onClose={() => setShowRerun(false)} onSubmit={(from, cfg) => act(() => api.rerun(run.id, from, cfg)).then((ok) => ok && setShowRerun(false))} />}
+      {paused && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn/10 px-4 py-3">
+          <PauseCircle className="size-5 shrink-0 text-warn" />
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-medium text-warn">Paused before training</div>
+            <div className="text-fg/80">
+              Too many camera positions look wrong{String(sfm.retry ?? "").startsWith("Retried") ? ", even after an automatic retry," : ""} so training would
+              probably produce a garbled splat. See the capture report below for where. Refilming those moments is the reliable fix.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button icon={<Play className="size-4" />} onClick={() => act(() => api.resumeRun(run.id))}>
+              Train anyway
+            </Button>
+            <Button icon={<Wrench className="size-4" />} onClick={() => { setRerunFrom("sfm"); setShowRerun(true); }}>
+              Re-run camera poses…
+            </Button>
+            <Button variant="ghost" icon={<Square className="size-3.5" />} onClick={() => act(() => api.cancelRun(run.id))}>
+              Stop here
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {showRerun && <RerunPanel key={rerunFrom} initialFrom={rerunFrom} run={run} stages={info.stages} onClose={() => setShowRerun(false)} onSubmit={(from, cfg) => act(() => api.rerun(run.id, from, cfg)).then((ok) => ok && setShowRerun(false))} />}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -123,6 +152,7 @@ export function RunDetailPage() {
               ))}
             </ol>
           </Card>
+          <CaptureReport run={run} duration={capture?.duration_sec} />
           {/* Keyed on when the stage finished, so a re-run in place refetches instead of showing the old result. */}
           {trainStage?.status === "done" && <LossChart key={trainStage.finished ?? ""} url={api.file(run.id, "train/stats.json")} />}
           {run.stages[0].status === "done" && <FramesStrip key={run.stages[0].finished ?? ""} runId={run.id} version={run.stages[0].finished ?? ""} />}
@@ -133,7 +163,8 @@ export function RunDetailPage() {
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4">
               <Stat label="Frames posed" value={sfm.registered_frames != null ? `${sfm.registered_frames} / ${sfm.total_frames}` : null} />
               <Stat label="Sparse points" value={sfm.sparse_points != null ? formatNumber(Number(sfm.sparse_points)) : null} />
-              <Stat label="Reprojection err." value={sfm.mean_reprojection_error_px != null ? `${sfm.mean_reprojection_error_px} px` : null} hint="Mean COLMAP reprojection error; under ~1 px is healthy" />
+              <Stat label="Reprojection err." value={sfm.mean_reprojection_error_px != null ? `${sfm.mean_reprojection_error_px} px` : null} hint="Mean COLMAP reprojection error. A low value does not mean the camera positions are right (garbled runs scored 0.5-0.8 px); the capture report checks that" />
+              <Stat label="Frames left out" value={sfm.excluded_frames ?? null} hint="Frames whose camera positions looked wrong; not used for training" />
               <Stat label="Gaussians" value={train.num_gaussians != null ? formatNumber(Number(train.num_gaussians)) : null} />
               <Stat label="PSNR (held-out)" value={train.test_psnr != null ? `${train.test_psnr} dB` : null} hint="On frames excluded from training; enable with 'Hold out every Nth frame'" />
               <Stat label="SSIM (held-out)" value={train.test_ssim ?? null} />
@@ -203,7 +234,8 @@ function StageRow({ run, stage, def }: { run: Run; stage: StageState; def?: Stag
     return () => clearInterval(id);
   }, [running]);
   const secs = elapsed(stage.started, stage.finished);
-  const resultEntries = Object.entries(stage.result ?? {}).filter(([, v]) => typeof v !== "object");
+  // The retry note and verdict are shown in the capture report.
+  const resultEntries = Object.entries(stage.result ?? {}).filter(([k, v]) => typeof v !== "object" && k !== "retry" && k !== "verdict");
 
   return (
     <li className="px-4 py-3">
@@ -282,15 +314,17 @@ function FramesStrip({ runId, version }: { runId: string; version: string }) {
 function RerunPanel({
   run,
   stages,
+  initialFrom,
   onClose,
   onSubmit,
 }: {
   run: Run;
+  initialFrom: string;
   stages: StageDef[];
   onClose: () => void;
   onSubmit: (from: string, config: StageConfig) => void;
 }) {
-  const [from, setFrom] = useState("train");
+  const [from, setFrom] = useState(initialFrom);
   const [config, setConfig] = useState<StageConfig>(() => configFrom(stages, run.config as StageConfig));
   const names = stages.map((s) => s.name);
   const locked = names.slice(0, names.indexOf(from));

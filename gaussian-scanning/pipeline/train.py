@@ -10,6 +10,14 @@ exported splat directly.
 With --holdout-every N, every Nth frame is left out of training and used to
 report PSNR/SSIM on views the model never saw; the standard quality check.
 
+Frames the camera-pose stage flagged as wrongly placed (sfm/quality.json
+"excluded") are left out entirely: neither trained on nor scored.
+
+Densification stops once the number of Gaussians reaches a cap sized from the
+free GPU memory (--max-gaussians 0). Noisy captures densify without limit:
+a handheld worst-case video reached 6.45M Gaussians and ran out of 16 GB
+halfway through a 30k run. Hitting the cap is reported as an info issue.
+
 Writes <run>/train/splats.pt and <run>/train/stats.json.
 """
 import argparse
@@ -114,6 +122,17 @@ def render(splats, viewmat, K, width, height, sh_degree, packed=False):
     )
 
 
+BYTES_PER_GAUSSIAN = 1800  # measured: 6.45M Gaussians held 11.7 GB (params, Adam state, grads, render buffers)
+CAP_HEADROOM = 0.85
+
+
+def gaussian_budget() -> int:
+    """How many Gaussians fit in about half of the GPU memory free now (the rest
+    is headroom for rendering, SSIM and densification's temporary copies)."""
+    free, _ = torch.cuda.mem_get_info()
+    return max(500_000, int(0.55 * free / BYTES_PER_GAUSSIAN))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-dir", type=Path, required=True)
@@ -121,6 +140,7 @@ def main() -> None:
     p.add_argument("--sh-degree", type=int, default=3, choices=[0, 1, 2, 3])
     p.add_argument("--holdout-every", type=int, default=0, help="hold out every Nth frame for evaluation (0 = train on all)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--max-gaussians", type=int, default=0, help="stop densifying at this many Gaussians (0 = sized from free GPU memory)")
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
@@ -132,6 +152,14 @@ def main() -> None:
     cameras, images, (xyz, rgb, _) = read_model(paths.sparse_txt)
     if len(xyz) == 0:
         raise SystemExit("sparse model has no points to initialise from")
+    quality = paths.sfm / "quality.json"
+    flagged = set(json.loads(quality.read_text()).get("excluded", [])) if quality.exists() else set()
+    n_excluded = sum(im.name in flagged for im in images)
+    if n_excluded:
+        images = [im for im in images if im.name not in flagged]
+        print(f"leaving out {n_excluded} frames whose camera positions looked wrong")
+    if not images:
+        raise SystemExit("no frames left to train on")
     # gsplat compiles its CUDA kernels on first use (cached afterwards).
     progress(0.0, "loading gsplat CUDA kernels (the very first run compiles them, ~2 min)")
     from gsplat.cuda._backend import _C  # noqa: F401
@@ -182,6 +210,8 @@ def main() -> None:
     strategy = DefaultStrategy(refine_stop_iter=int(15_000 * frac), reset_every=3000, refine_every=100)
     strategy.check_sanity(splats, optimizers)
     strategy_state = strategy.initialize_state(scene_scale=scene_scale)
+    cap = args.max_gaussians or gaussian_budget()
+    capped_at = None
 
     print(f"{len(train_ids)} train / {len(test_ids)} held-out frames, {n} initial Gaussians, scene scale {scene_scale:.3f}")
     t0 = time.monotonic()
@@ -208,6 +238,10 @@ def main() -> None:
             opt.step()
             opt.zero_grad(set_to_none=True)
         means_sched.step()
+        # One refine step can add a lot at once, so stop with headroom to spare.
+        if capped_at is None and step < strategy.refine_stop_iter and len(splats["means"]) >= CAP_HEADROOM * cap:
+            strategy.refine_stop_iter = capped_at = step
+            print(f"step {step}: {len(splats['means']):,} Gaussians, near the cap of {cap:,}; no more densification")
         strategy.step_post_backward(splats, optimizers, strategy_state, step, info, packed=False)
 
         if step % 10 == 0:  # .item() syncs the GPU; don't do it every step
@@ -252,8 +286,10 @@ def main() -> None:
     stats = {
         "iterations": args.iterations,
         "num_gaussians": len(splats["means"]),
+        "excluded_frames": n_excluded,
         "train_seconds": round(train_seconds, 1),
         "peak_gpu_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2),
+        "max_gaussians": cap,
         "scene_scale": round(scene_scale, 4),
         "held_out_frames": [frames.names[i] for i in test_ids],
         "loss_curve": loss_log,
@@ -261,8 +297,23 @@ def main() -> None:
     }
     (out / "stats.json").write_text(json.dumps(stats, indent=2))
     print(json.dumps({k: v for k, v in stats.items() if k not in ("loss_curve", "held_out_frames")}, indent=2))
-    result(**{k: v for k, v in stats.items() if k not in ("loss_curve", "held_out_frames")})
+    issues = []
+    if capped_at is not None:
+        issues.append({
+            "kind": "gaussian_cap", "severity": "info", "title": "Detail was capped to fit in GPU memory",
+            "detail": f"Densification stopped at step {capped_at:,} with {cap:,} Gaussians allowed. "
+                      "Noisy captures grow floaters without limit, so this usually means parts of the capture were hard to reconstruct.",
+            "fix": "Nothing to do; if the splat looks coarse, a lower Max image size or a cleaner capture helps.",
+            "ranges": [], "frames": 0,
+        })
+    result(**{k: v for k, v in stats.items() if k not in ("loss_curve", "held_out_frames")}, densify_stopped_at=capped_at, issues=issues)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except torch.OutOfMemoryError:
+        raise SystemExit(
+            "The GPU ran out of memory. Close other programs using the GPU, or lower Max image size "
+            "or Max Gaussians in the training settings, then re-run training."
+        ) from None

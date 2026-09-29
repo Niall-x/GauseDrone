@@ -1,5 +1,6 @@
 """Unit tests for pipeline pieces that don't need COLMAP or a GPU."""
 import gzip
+import json
 import struct
 
 import numpy as np
@@ -248,15 +249,45 @@ def walk_poses(n, step=0.1, turn_deg=5.0):
     return frames, c2w
 
 
-def test_check_poses_clean_walk_has_no_warnings():
-    from pipeline.sfm import check_poses
+def kinds(issues):
+    return {i["kind"]: i for i in issues}
+
+
+def test_check_poses_clean_walk_is_good():
+    from pipeline.quality import check_poses
 
     frames, c2w = walk_poses(60)
-    assert check_poses(frames, c2w, [60], "incremental") == []
+    assert check_poses(frames, c2w, [60], "incremental") == ([], "good", [])
 
 
-def test_check_poses_flags_jumps_stacks_flips_and_gaps():
-    from pipeline.sfm import check_poses
+def test_check_poses_one_local_problem_is_left_out():
+    from pipeline.quality import check_poses
+
+    frames, c2w = walk_poses(200)
+    c2w[frames[100][0]][:3, 3] += [5.0, 0, 0]  # one frame thrown off the path
+    for i in range(150, 154):
+        del c2w[frames[i][0]]
+    issues, verdict, excluded = check_poses(frames, c2w, [196], "incremental")
+    assert verdict == "gaps"
+    k = kinds(issues)
+    assert k["bad_poses"]["severity"] == "warning" and "left out of training" in k["bad_poses"]["fix"]
+    assert excluded == [frames[i][0] for i in (99, 100, 101)]  # the outlier and both neighbours it jumps between
+    assert k["unplaced"]["ranges"][0]["start"] == 37.5 and k["unplaced"]["frames"] == 4
+
+
+def test_check_poses_ignores_slivers_of_unplaced_video():
+    from pipeline.quality import check_poses
+
+    frames, c2w = walk_poses(100)
+    frames = [(name, t / 3) for name, t in frames]  # 12 fps, as around a retried stretch
+    c2w = {name: c2w[old] for (name, _), old in zip(frames, c2w)}
+    for i in range(50, 53):  # 3 frames, 0.33 s uncovered
+        del c2w[frames[i][0]]
+    assert check_poses(frames, c2w, [97], "incremental")[1] == "good"
+
+
+def test_check_poses_spread_problems_are_unreliable():
+    from pipeline.quality import check_poses
 
     frames, c2w = walk_poses(60)
     for i in range(20, 60):  # a jump of 20 steps between frames 19 and 20
@@ -264,40 +295,70 @@ def test_check_poses_flags_jumps_stacks_flips_and_gaps():
     for i in range(31, 36):  # frames 30-35 on one spot while still turning
         c2w[frames[i][0]][:3, 3] = c2w[frames[30][0]][:3, 3]
     c2w[frames[45][0]][:3, :3] = rot([0, 1, 0], 180) @ c2w[frames[45][0]][:3, :3]  # flipped round
-    for i in range(50, 54):
+    issues, verdict, excluded = check_poses(frames, c2w, [60], "global")
+    assert verdict == "unreliable"
+    bad = kinds(issues)["bad_poses"]
+    assert bad["severity"] == "error"
+    assert "jumps" in bad["detail"] and "stacked" in bad["detail"] and "flips" in bad["detail"]
+    assert "4.8-5.0 s" in bad["detail"] and "incremental mapper" in bad["fix"]
+    assert len(excluded) > 3
+
+
+def test_check_poses_split_scene():
+    from pipeline.quality import check_poses
+
+    frames, c2w = walk_poses(100)
+    for i in range(60, 100):
         del c2w[frames[i][0]]
-    w = " | ".join(check_poses(frames, c2w, [56, 4], "global"))
-    assert "split into 2 pieces" in w
-    assert "4 frames could not be placed" in w and "12.5-13.2 s" in w
-    assert "jumps" in w and "4.8-5.0 s" in w
-    assert "same spot" in w and "7.5-8.8 s" in w
-    assert "flips" in w
-    assert "try the incremental mapper" in w
+    _, verdict, _ = check_poses(frames, c2w, [60, 40], "incremental")
+    assert verdict == "unreliable"  # the piece used holds under 70% of the capture
+    frames, c2w = walk_poses(100)
+    for i in range(85, 100):
+        del c2w[frames[i][0]]
+    issues, verdict, _ = check_poses(frames, c2w, [85, 15], "incremental")
+    assert verdict == "gaps" and kinds(issues)["split"]["severity"] == "warning"
+    # a stray 2-frame piece is noise: only the unplaced frames are reported
+    issues, _, _ = check_poses(frames, c2w, [85, 2], "incremental")
+    assert "split" not in kinds(issues) and "unplaced" in kinds(issues)
 
 
 def test_check_poses_photos_skip_neighbour_checks():
-    from pipeline.sfm import check_poses
+    from pipeline.quality import check_poses
 
     frames, c2w = walk_poses(30)
     c2w[frames[10][0]][:3, 3] += [50.0, 0, 0]
     photos = [(name, None) for name, _ in frames]  # photo order says nothing about where they were taken
-    assert check_poses(photos, c2w, [30], "incremental") == []
+    assert check_poses(photos, c2w, [30], "incremental") == ([], "good", [])
     # a duplicate small model is fine when the model used has every frame
-    assert check_poses(photos, c2w, [30, 5], "incremental") == []
+    assert check_poses(photos, c2w, [30, 5], "incremental")[1] == "good"
 
 
-def test_blur_warnings():
-    from pipeline.extract_frames import blur_warnings
+def test_blur_issues():
+    from pipeline.quality import blur_issues
 
-    def rows(sharpness):
-        return [(f"f{i}.jpg", "v.mp4", f"{0.25 * i:.4f}", f"{s:.1f}", 900, 1600) for i, s in enumerate(sharpness)]
-
+    frames = [(f"f{i}.jpg", 0.25 * i) for i in range(80)]
     sharp = [800.0] * 80
-    assert blur_warnings(rows(sharp)) == []
-    blurry = sharp[:]
-    blurry[40:48] = [100.0] * 8  # 10.0-11.75 s
-    blurry[20] = 100.0  # a single blurry frame is not worth a warning
-    (w,) = blur_warnings(rows(blurry))
-    assert "10.0-11.8 s" in w and "5.0" not in w
-    photos = [(n, s, "", sh, wd, h) for n, s, _, sh, wd, h in rows(blurry)]
-    assert blur_warnings(photos) == []
+    assert blur_issues(frames, sharp) == []
+    sharp[40:48] = [100.0] * 8  # 10.0-11.75 s
+    sharp[20] = 100.0  # a single blurry frame is not worth reporting
+    (i,) = blur_issues(frames, sharp)
+    json.dumps(i)  # travels through the stage protocol as JSON
+    assert i["severity"] == "info" and [(r["start"], r["end"]) for r in i["ranges"]] == [(10.0, 11.75)]
+    assert blur_issues([(n, None) for n, _ in frames], sharp) == []
+
+
+def test_sample_video_window(tmp_path):
+    import cv2
+
+    from pipeline.extract_frames import sample_video
+
+    video = tmp_path / "v.avi"
+    w = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+    for i in range(50):  # 5 s at 10 fps
+        w.write(np.full((48, 64, 3), i * 5, np.uint8))
+    w.release()
+    rows, _ = sample_video(video, tmp_path, 4, 0, start=2.0, end=3.0, name=lambda i, t: f"x_{i:03d}.jpg", skip_near=[2.5])
+    times = [float(r[2]) for r in rows]
+    assert times and all(2.0 <= t <= 3.0 for t in times)
+    assert all(abs(t - 2.5) >= 0.125 for t in times)  # the bucket next to an existing frame is skipped
+    assert all((tmp_path / r[0]).exists() for r in rows)

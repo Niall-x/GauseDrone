@@ -1,4 +1,4 @@
-# Gaussian Splat Pipeline: Sub-Brief (v0.5)
+# Gaussian Splat Pipeline: Sub-Brief (v0.6)
 
 Status: M1 ("splat pipeline, no drone") from the main project brief is **built**: a pipeline plus a local app (Splat Lab) that runs it and views the result. See [`README.md`](README.md) to run it and [`app/BRIEF.md`](app/BRIEF.md) for the app's design. No drone sensor data is used yet.
 
@@ -10,7 +10,7 @@ Turning a set of photos or a walked/orbited video into a viewable Gaussian splat
 
 1. **Capture**: sequential, overlapping photos, or video, of the object/room. No stereo or depth sensor needed.
 2. **Frames**: from video, the sharpest frame in each 1/fps-second window is kept, with its real timestamp (needed later to match frames to drone logs).
-3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Feature extraction and matching run on the GPU; exhaustive matching for up to 800 frames (catches loop closures when a room scan returns to its start; ~3 min of video at the default 4 fps), then the incremental mapper up to 800 frames and the global mapper (GLOMAP, now built into COLMAP) beyond (bundle adjustment runs on the CPU), then undistortion to a pinhole camera. Global mapping was the default until it proved unreliable on handheld phone video (section 3a). The poses are now sanity-checked (jumps, stacked frames, impossible turn rates, unplaced stretches, split models) and problems are shown as warnings on the run, as are long blurry or blank stretches of video.
+3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Feature extraction and matching run on the GPU; exhaustive matching for up to 800 frames (catches loop closures when a room scan returns to its start; ~3 min of video at the default 4 fps), then the incremental mapper up to 800 frames and the global mapper (GLOMAP, now built into COLMAP) beyond (bundle adjustment runs on the CPU), then undistortion to a pinhole camera. Global mapping was the default until it proved unreliable on handheld phone video (section 3a). The poses are then checked for errors; frames with wrong positions are left out of training, and a run whose positions can't be trusted pauses before training (section 3b).
 4. **Gaussian splat training**: gsplat fits hundreds of thousands of 3D Gaussians (position, size/orientation, opacity, colour) so that rendering them from each camera pose matches the photo. Standard 3DGS recipe: densification, L1 + SSIM loss, spherical harmonics up to degree 3. 7k iterations for a draft, 30k for full quality.
 5. **Export + viewer**: PLY (full precision) and SPZ (about 10x smaller) plus the camera path, opened in the app's own viewer.
 
@@ -36,6 +36,44 @@ Two phone videos (4K portrait, 30 fps) of one room: a 39 s turn on the spot, and
 - **Auto-exposure swings** when the camera faces a bright window, which training can't reconcile (floaters). Not addressed yet; per-image appearance compensation in training (gsplat supports it) is the likely fix, or exposure lock on the phone.
 
 Capture guidance that follows (also in the top-level README): walk slowly rather than turning on the spot; move gradually between room-scale views and close-ups; avoid quick sweeps over blank walls, doors and floor; don't film out of windows; keep the zoom fixed (a lens switch breaks the single-camera assumption).
+
+### 3b. Handling captures that aren't ideal (decided 2026-09-29)
+
+Good captures give good splats. Bad ones will keep happening, including from the drone: its movement will be more structured than a handheld phone, but blur, blank walls, windows and SfM failures don't go away. The pipeline can measure a lot about a capture, so the approach is to use those measurements rather than train blindly on whatever COLMAP returns.
+
+**Principles**
+1. **A missing area is better than a garbled room.** Data we can't trust is left out, and the user is told, instead of letting it corrupt everything else.
+2. **Detect, then fix or tell.** Each problem is either fixed automatically (and logged) or reported with where it is and what to do.
+3. **Say where.** For video that means seconds into the capture, with thumbnails, so the user knows which moment to refilm (and, later, the planner knows where to fly again).
+4. **Only raise what's actionable.** Anything that doesn't change what the user does, or explain a flaw they'll see, is hidden or shown as info.
+5. **Stop early when it's hopeless.** Don't spend training time on camera positions already known to be wrong.
+
+**What happens** (code: `pipeline/quality.py`, `pipeline/sfm.py`)
+
+| Problem | Detected by | Automatic response | Shown to the user |
+|---|---|---|---|
+| Wrong camera positions: jumps, frames stacked on one spot, impossible turns | Neighbouring-frame motion (video) | One retry (below). Flagged frames are left out of training | Warning with times; red cameras in the viewer |
+| Stretches that couldn't be placed | Frames missing from the model, leaving 1 s or more of video uncovered (3+ frames for photos) | One retry with extra frames around them | Warning with times: "refilm these moments" |
+| The scene split into pieces | More than one COLMAP model | Same retry; the largest piece is used | Warning, or error if the piece holds under 70% of the frames |
+| Most frames unplaced | Under half placed | Same retry | Error |
+| Blur or plain surfaces | Sharpness under 35% of the median for 1.5 s or more | None (blur rejection was tested and hurts) | Info, and named as the likely cause when it overlaps a failure |
+
+**Verdict** for every run, from the camera-pose check:
+- **Good:** nothing found.
+- **Usable, with gaps:** some stretches missing or left out; the rest can be trusted.
+- **Unreliable:** wrong positions in 3 or more separate places or on more than 5% of frames (spread-out errors mean the in-between positions can't be trusted either), the piece used holds under 70% of the frames, or under half the frames are placed. The run **pauses before training** ("Needs attention"), offering *Train anyway*, *Re-run camera poses* and *Stop here*.
+
+The thresholds were set on six reconstructions of our two handheld videos: every garbled one comes out Unreliable and the good ones don't.
+
+**The retry** runs once, only when the first attempt isn't Good: the incremental mapper (if the global one was used) plus frames at 3x the capture rate within 2 s of each failed stretch. It reuses the first attempt's features and matches, so only the new frames cost time. The better of the two attempts is kept, judged by verdict first and then the share of frames placed and kept.
+
+**Deliberately not raised:** isolated blurry frames (frame selection already skips them), low sharpness where poses came out fine, the small duplicate models COLMAP sometimes leaves, reprojection error (garbled runs scored 0.5–0.8 px, which looks healthy), and absolute PSNR thresholds (they depend on the scene).
+
+**Structured, not just text.** Each issue has a kind, severity, time ranges, frame names, the evidence and the fix, saved with the run (`sfm/quality.json` and the stage result). The UI draws the capture-report timeline from it. The same record is what the drone's planner will need to go back and re-fly weak areas (M7 and the stretch goal), so this is groundwork for autonomy as well as a UI feature.
+
+**Training can't be run out of memory by a bad capture.** Noisy footage grows floaters without limit: the worst-case walk reached 6.45M Gaussians and crashed a 30k run on the 16 GB card. Densification now stops at a cap sized from the free GPU memory (about 4.2M on this machine), reported as an info note when reached.
+
+**Next** (not built yet): exposure compensation in training (gsplat's appearance embeddings) for brightness swings; spotting moving objects from frames the finished splat reproduces badly; a "turned on the spot" detector from the camera path; a "moving too fast" detector from matches between neighbouring frames; warnings before a run starts (e.g. a capture too short). Each needs checking against a set of short test clips with known faults (fast pan, window, blank wall, turning on the spot, a person walking through, a zoom change) plus one clean walk before it ships.
 
 ## 4. Decision: camera-only now, staged sensor fusion later
 

@@ -11,8 +11,11 @@ Photos: copied (resized if larger than --max-size), in name order.
 
 Writes <run>/frames/*.jpg and <run>/frames.csv (file_name, source,
 timestamp_sec, sharpness, width, height). Stretches of video that are much less
-sharp than the rest are reported as `warnings` in the stage result: that is
-where SfM tends to lose track and the capture falls apart.
+sharp than the rest are reported as an info `issue` in the stage result (see
+pipeline/quality.py): that is where SfM tends to lose track.
+
+sample_video() also serves the camera-pose stage's retry, which samples extra
+frames around stretches that failed.
 """
 import argparse
 import csv
@@ -24,15 +27,10 @@ import cv2
 import numpy as np
 
 from pipeline.common import IMAGE_EXTS, VIDEO_EXTS, RunPaths, fresh_dir, progress, result
+from pipeline.quality import blur_issues
 
 SHARPNESS_SIZE = 640  # long side of the copy the blur score is measured on
 CANDIDATES_PER_BUCKET = 8  # frames scored per bucket; the rest are skipped undecoded
-# Blur warning: frames under this fraction of the median sharpness, merged when
-# less than MERGE_SEC apart, reported when the stretch lasts MIN_SEC or more.
-# On a handheld room video the stretch SfM could not place scored 13-35% of the median.
-BLUR_FRACTION = 0.35
-BLUR_MERGE_SEC = 1.5
-BLUR_MIN_SEC = 1.5
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -51,27 +49,46 @@ def fit(img: np.ndarray, max_size: int) -> np.ndarray:
     return cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
 
 
-def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list, dict]:
+def sample_video(
+    video: Path,
+    out: Path,
+    fps: float,
+    max_size: int,
+    start: float = 0.0,
+    end: float = float("inf"),
+    name=lambda i, t: f"frame_{i:05d}.jpg",
+    skip_near: list[float] | None = None,
+) -> tuple[list, dict]:
+    """Keep the sharpest frame of each 1/fps-second bucket between start and end
+    (seconds), skipping buckets within half a bucket of a time in skip_near.
+    name(i, t) names the i-th kept frame. Returns frames.csv rows and video info."""
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise SystemExit(f"could not open video {video}")
     video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
     stride = max(1, round(video_fps / fps / CANDIDATES_PER_BUCKET))
+    if start > 0:
+        cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
+    near = np.sort(np.asarray(skip_near or [], float))
 
     rows = []
     best = None  # (sharpness, timestamp, frame) for the current bucket
-    bucket = 0
+    bucket = None
     size = None
 
     def flush():
         if best is None:
             return
         s, t, frame = best
-        name = f"frame_{len(rows):05d}.jpg"
+        if len(near):
+            k = np.searchsorted(near, t)
+            if min(abs(near[max(k - 1, 0)] - t), abs(near[min(k, len(near) - 1)] - t)) < 0.5 / fps:
+                return
         img = fit(frame, max_size)
-        cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        rows.append((name, video.name, f"{t:.4f}", f"{s:.1f}", img.shape[1], img.shape[0]))
+        file_name = name(len(rows), t)
+        cv2.imwrite(str(out / file_name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        rows.append((file_name, video.name, f"{t:.4f}", f"{s:.1f}", img.shape[1], img.shape[0]))
 
     index = 0
     while True:
@@ -83,7 +100,12 @@ def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list,
         ok, frame = cap.read()
         if not ok:
             break
+        index += 1
         t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        if t < start:
+            continue
+        if t > end:
+            break
         size = size or frame.shape[1::-1]
         b = int(t * fps)
         if b != bucket:
@@ -92,34 +114,11 @@ def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list,
         s = sharpness(frame)
         if best is None or s > best[0]:
             best = (s, t, frame)
-        index += 1
-        if index % 50 == 0:
+        if index % 50 == 0 and end == float("inf"):
             progress(index / total, f"decoded {index}/{total} frames, kept {len(rows)}")
     flush()
     cap.release()
     return rows, {"source_kind": "video", "video_fps": round(video_fps, 3), "source_size": size}
-
-
-def blur_warnings(rows: list) -> list[str]:
-    """Warnings for long stretches of video far less sharp than its median frame."""
-    if len(rows) < 10 or not all(r[2] for r in rows):
-        return []
-    sharp = np.array([float(r[3]) for r in rows])
-    times = np.array([float(r[2]) for r in rows])
-    median = float(np.median(sharp))
-    stretches: list[list[float]] = []
-    for t in times[sharp < BLUR_FRACTION * median]:
-        if stretches and t - stretches[-1][1] <= BLUR_MERGE_SEC:
-            stretches[-1][1] = t
-        else:
-            stretches.append([t, t])
-    long = [f"{a:.1f}-{b:.1f} s" for a, b in stretches if b - a >= BLUR_MIN_SEC]
-    if not long:
-        return []
-    return [
-        f"The video is much less sharp than usual at {', '.join(long)} (motion blur, or plain surfaces like a blank wall). "
-        "Camera poses often fail there: if the splat is broken around that part, refilm it more slowly."
-    ]
 
 
 def jpeg_orientation(path: Path) -> int:
@@ -191,20 +190,20 @@ def main() -> None:
 
     src = args.input
     if src.is_file() and src.suffix.lower() in VIDEO_EXTS:
-        rows, info = from_video(src, out, args.fps, args.max_size)
+        rows, info = sample_video(src, out, args.fps, args.max_size)
     elif src.is_dir():
         videos = [v for v in src.iterdir() if v.suffix.lower() in VIDEO_EXTS]
         images = [i for i in src.rglob("*") if i.suffix.lower() in IMAGE_EXTS]
         if len(videos) == 1 and not images:
-            rows, info = from_video(videos[0], out, args.fps, args.max_size)
+            rows, info = sample_video(videos[0], out, args.fps, args.max_size)
         else:
             rows, info = from_images(src, out, args.max_size)
     else:
         raise SystemExit(f"{src} is neither a video file nor a folder")
 
-    warnings = blur_warnings(rows)
-    for w in warnings:
-        print(f"WARNING: {w}")
+    issues = blur_issues([(r[0], float(r[2]) if r[2] else None) for r in rows], [float(r[3]) for r in rows])
+    for i in issues:
+        print(f"{i['severity'].upper()}: {i['title']}. {i['detail']}")
 
     if args.blur_reject > 0 and rows:
         median = float(np.median([float(r[3]) for r in rows]))
@@ -229,7 +228,7 @@ def main() -> None:
 
     sizes = sorted({(int(r[4]), int(r[5])) for r in rows})
     progress(1.0, f"kept {len(rows)} frames")
-    result(num_frames=len(rows), frame_size=list(sizes[0]) if len(sizes) == 1 else [list(x) for x in sizes], **info, warnings=warnings)
+    result(num_frames=len(rows), frame_size=list(sizes[0]) if len(sizes) == 1 else [list(x) for x in sizes], **info, issues=issues)
 
 
 if __name__ == "__main__":

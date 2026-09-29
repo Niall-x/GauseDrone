@@ -138,7 +138,7 @@ export function ViewerPage() {
           <ToolButton active={showTrajectory} onClick={() => setShowTrajectory((v) => !v)} title="Capture path">
             <Route className="size-4" />
           </ToolButton>
-          <ToolButton active={showFrustums} onClick={() => setShowFrustums((v) => !v)} title="Camera frustums">
+          <ToolButton active={showFrustums} onClick={() => setShowFrustums((v) => !v)} title="Camera frustums (red: camera position looked wrong, frame left out of training)">
             <Video className="size-4" />
           </ToolButton>
           <ToolButton active={cutaway != null} onClick={() => setCutaway((c) => (c == null ? 0.6 : null))} title="Cutaway: hide the ceiling and upper walls to see into the room from above">
@@ -200,7 +200,7 @@ export function ViewerPage() {
         <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 p-3">
           {showPhoto && cam && (
             <img
-              src={api.file(runId, `frames/${cam.name}`)}
+              src={api.file(runId, `sfm/undistorted/images/${cam.name}`)}
               alt={cam.name}
               className="max-h-[28vh] max-w-[40vw] rounded-md border border-line-strong object-contain shadow-2xl"
             />
@@ -222,7 +222,7 @@ export function ViewerPage() {
               <ChevronRight className="size-4" />
             </ToolButton>
             <span className="w-40 truncate text-right font-mono text-[11px] text-faint" title={cam?.name}>
-              {cam ? `${camIndex! + 1}/${view.cameras.length} ${cam.name}` : `${view.cameras.length} capture cameras`}
+              {cam ? `${camIndex! + 1}/${view.cameras.length} ${cam.name}${cam.excluded ? " (left out)" : ""}` : `${view.cameras.length} capture cameras`}
             </span>
           </div>
         </div>

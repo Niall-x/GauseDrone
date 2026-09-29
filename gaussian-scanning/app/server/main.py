@@ -374,9 +374,11 @@ def update_run(run_id: str, req: UpdateRequest) -> Run:
 
 @app.post("/api/runs/{run_id}/cancel")
 def cancel_run(run_id: str) -> Run:
-    get_run_or_404(run_id)
+    run = get_run_or_404(run_id)
+    if run.status == "paused":  # nothing is running: just close it
+        return store.update_run(run_id, lambda r: setattr(r, "status", "cancelled"))
     if not runner.cancel(run_id):
-        raise HTTPException(409, "run is not queued or running")
+        raise HTTPException(409, "run is not queued, running or paused")
     return get_run_or_404(run_id)
 
 

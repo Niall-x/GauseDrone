@@ -16,6 +16,7 @@ def main() -> None:
     p.add_argument("--sleep", type=float, default=0.0)
     p.add_argument("--fail", type=int, default=0)
     p.add_argument("--garbage", type=int, default=0)
+    p.add_argument("--unreliable", type=int, default=0)
     args = p.parse_args()
 
     out = args.run_dir / args.name
@@ -31,7 +32,7 @@ def main() -> None:
         raise SystemExit("fake stage failed on purpose")
     (out / "marker.txt").write_text(f"value={args.value}")
     progress(1.0, "done")
-    result(value=args.value, had_input=args.input is not None)
+    result(value=args.value, had_input=args.input is not None, **({"verdict": "unreliable"} if args.unreliable else {}))
 
 
 if __name__ == "__main__":

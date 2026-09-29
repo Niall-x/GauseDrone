@@ -52,8 +52,9 @@ STAGES: list[Stage] = [
         name="sfm",
         label="Camera poses",
         module="pipeline.sfm",
-        description="COLMAP structure-from-motion: where each frame was taken from, plus a sparse point cloud",
+        description="COLMAP structure-from-motion: where each frame was taken from, plus a sparse point cloud; checked for errors",
         outputs=["sfm"],
+        needs_input=True,  # the video, for the retry's extra frames
         params=[
             Param("matcher", "Matcher", "choice", "auto",
                   "auto = exhaustive up to 800 frames (finds loop closures), sequential beyond",
@@ -67,6 +68,8 @@ STAGES: list[Stage] = [
                   "1 if every frame came from the same camera at the same zoom", choices=[1, 0]),
             Param("use-gpu", "GPU features + matching", "choice", 1,
                   "1 = SIFT extraction and matching on the GPU (several times faster matching); 0 = CPU", choices=[1, 0]),
+            Param("retry", "Automatic retry", "choice", 1,
+                  "1 = if the check finds problems, retry once with the incremental mapper and extra frames around them", choices=[1, 0]),
         ],
     ),
     Stage(
@@ -81,6 +84,9 @@ STAGES: list[Stage] = [
             Param("sh-degree", "SH degree", "choice", 3, "View-dependent colour detail (0 = flat colour)", choices=[3, 2, 1, 0]),
             Param("holdout-every", "Hold out every Nth frame", "int", 0,
                   "Leave frames out of training to measure quality on unseen views (0 = off, 8 is standard)", min=0, max=100),
+            Param("max-gaussians", "Max Gaussians", "int", 0,
+                  "Stop adding detail at this many Gaussians (0 = sized from free GPU memory, so noisy captures can't run it out)",
+                  min=0, max=50_000_000),
         ],
     ),
     Stage(

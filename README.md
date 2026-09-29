@@ -128,9 +128,20 @@ This checks the whole setup before you film anything.
    **Resume upload** to continue where it stopped.) Tick *Link instead of
    copying* to avoid duplicating big files; the original must then stay where it is.
 3. **Run** → **Draft** → **Start run**. Default settings are a good start:
-   4 frames per second of video, images up to 1600 px. Check the Frames and
-   Camera poses steps for amber warnings before trusting the result.
-4. Check the result in the viewer. If it looks right, get the full-quality
+   4 frames per second of video, images up to 1600 px.
+4. Read the **Capture report** on the run page. The app checks the video and
+   the camera positions COLMAP worked out, and gives the run a verdict:
+   - **Good**: nothing found.
+   - **Usable, with gaps**: parts of the video couldn't be used (the report
+     says which seconds, with thumbnails). Frames with wrong camera positions
+     are left out of training automatically, so the rest of the room isn't
+     garbled; those areas will just be thin or missing.
+   - **Unreliable**: too many camera positions look wrong. The app has
+     already retried once (with extra frames around the problems), and the
+     run stops before training, marked **Needs attention**. Choose *Train
+     anyway*, *Re-run camera poses…* with other settings, or *Stop here*.
+     Refilming the moments on the timeline is the reliable fix.
+5. Check the result in the viewer. If it looks right, get the full-quality
    version without redoing the slow camera-pose step: on the run page click
    **New run from this**, keep *Reuse up to Camera poses*, choose
    **Standard**, and start it (about 10 min of training).
@@ -160,10 +171,11 @@ This checks the whole setup before you film anything.
 | `splat-app` says the address is in use | Something already uses port 8000, often the background service. `systemctl --user stop splat-app`, or run on another port with `splat-app --port 8001`. |
 | The service won't start | `journalctl --user -u splat-app -n 50` shows why. If you moved the project folder or changed how Nix is installed, rerun `bin/splat-app install-service`. |
 | "Camera poses" fails, or only some frames are posed | Too much blur, too little overlap or too many blank surfaces. Check the log (the **log** link on that step). Refilm more slowly; or in Advanced settings raise *Frames per second* (default 4) to 6. |
-| Amber warnings on the Frames or Camera poses step (a warning icon in the runs list) | The app checks the capture for long blurry or blank stretches, and the camera poses for jumps, flips and frames stacked on one spot. Each warning gives the times in the video. Poses flagged as wrong garble the splat even though the run says "done": if the run used the *global* mapper, re-run camera poses with *incremental*; otherwise raise *Frames per second* or refilm those moments more slowly. |
-| The splat is garbled (walls doubled, the room smeared or folded) | Wrong camera poses; check the Camera poses step for warnings, as above. Turning on the spot, filming out of a window, and quick swings to close-ups are the usual causes. |
+| A run shows *Usable, with gaps* or *Unreliable* (amber or red icon in the runs list) | See the Capture report on the run page: each problem has the seconds of video it affects and what to do. Refilming those moments more slowly is the reliable fix. |
+| A run is paused with **Needs attention** | The camera positions couldn't be trusted even after an automatic retry, so it stopped before spending time on training. See the row above; *Train anyway* carries on regardless. |
+| The splat is garbled (walls doubled, the room smeared or folded) | Wrong camera positions. The capture report usually says where; frames it flagged are already left out, so a garbled splat with a *Good* verdict is worth reporting. Turning on the spot, filming out of a window, and quick swings to close-ups are the usual causes. In the viewer, the camera-frustum button draws left-out cameras in red. |
 | The splat is blurry or full of floating blobs | Usually the capture: blur, too few viewpoints, or areas seen from only one side. The Standard preset helps a little; better filming helps a lot. |
-| Training fails with "out of memory" | Lower *Max image size* (e.g. 1200) in Advanced settings and re-run. |
+| Training fails with "out of memory" | Another program may be using the GPU; close it and press **Resume**. Training now caps the number of Gaussians to fit the free GPU memory, so noisy captures no longer run it out; if it still happens, lower *Max Gaussians* (e.g. 3000000) or *Max image size* (e.g. 1200) in Advanced settings and re-run training. |
 | The scene looks tilted in the viewer | "Up" is guessed from how the camera was held. Cosmetic only; the splat itself is fine. |
 | The first training run sits at "loading gsplat CUDA kernels" | Normal the first time on a machine: it compiles GPU code for ~2 min, once. |
 | Sidebar says "no GPU found" | The NVIDIA driver isn't visible. Check `nvidia-smi` works in the same terminal. |

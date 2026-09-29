@@ -12,6 +12,8 @@ export interface ViewCamera {
   position: [number, number, number];
   forward: [number, number, number];
   up: [number, number, number];
+  /** Camera position judged wrong by the pose check; the frame was left out of training. */
+  excluded?: boolean;
 }
 
 export interface ViewInfo {
@@ -143,6 +145,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     const aspect = 1.5;
     const tanY = Math.tan(THREE.MathUtils.degToRad((view.fov_y_deg || 60) / 2));
     const pts: THREE.Vector3[] = [];
+    const badPts: THREE.Vector3[] = []; // cameras left out of training, drawn in red
     for (const c of view.cameras) {
       const o = v3(c.position);
       const f = v3(c.forward).normalize();
@@ -157,7 +160,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
         centre.clone().sub(dx).sub(dy),
         centre.clone().add(dx).sub(dy),
       ];
-      for (let i = 0; i < 4; i++) pts.push(o, corners[i], corners[i], corners[(i + 1) % 4]);
+      for (let i = 0; i < 4; i++) (c.excluded ? badPts : pts).push(o, corners[i], corners[i], corners[(i + 1) % 4]);
     }
     const frustums = new THREE.LineSegments(
       new THREE.BufferGeometry().setFromPoints(pts),
@@ -165,6 +168,12 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
     );
     frustums.renderOrder = 11;
     world.add(frustums);
+    const badFrustums = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(badPts),
+      new THREE.LineBasicMaterial({ color: 0xf87171, transparent: true, opacity: 0.9, depthTest: false }),
+    );
+    badFrustums.renderOrder = 11;
+    world.add(badFrustums);
 
     const highlight = new THREE.Mesh(
       new THREE.SphereGeometry(size * 0.35, 12, 8),
@@ -241,6 +250,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       setOverlays: (t, f) => {
         trajectory.visible = t;
         frustums.visible = f;
+        badFrustums.visible = f;
       },
       setCutaway,
       setSensitivity: (look, scroll) => {
@@ -290,7 +300,7 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
       renderer.domElement.removeEventListener("dblclick", onDblClick);
       controls.dispose();
       splat.dispose();
-      for (const obj of [trajectory, frustums, highlight]) {
+      for (const obj of [trajectory, frustums, badFrustums, highlight]) {
         obj.geometry.dispose();
         (obj.material as THREE.Material).dispose();
       }
