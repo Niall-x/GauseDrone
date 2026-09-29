@@ -84,6 +84,8 @@ Flight controller (we have ArduPilot experience), frame, motors and ESCs, batter
 
 Decided: splat framework is COLMAP 4 + gsplat (not nerfstudio), trained on the RTX 4070 Ti Super; see the [pipeline brief](gaussian-scanning/BRIEF.md).
 
----
+## 9. Currently working on
 
-To run Splat Lab, or for the developer reference (pipeline steps by hand, tests, code layout), see [`gaussian-scanning/README.md`](gaussian-scanning/README.md).
+Niall: app to generate and view scans is in a good place. will start reconstructing the done. wiring is done, need to reprogram and calibrate ardupilot and test raspberry pi 4B acting as a coprocessor giving instructions. wont implement any sensors beyond what was used in thesis
+
+---
