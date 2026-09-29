@@ -233,3 +233,71 @@ def test_knn_handles_tiny_clouds():
     small = knn_mean_dist(pts, max_elements=5)  # one row per chunk
     assert torch.allclose(small, knn_mean_dist(pts))
     assert torch.isclose(small[0], torch.tensor(2.0))  # neighbours at 1, 2, 3
+
+
+def walk_poses(n, step=0.1, turn_deg=5.0):
+    """c2w of a camera walking along +x and turning steadily, one frame every 0.25 s."""
+    frames, c2w = [], {}
+    for i in range(n):
+        m = np.eye(4)
+        m[:3, :3] = rot([0, 1, 0], turn_deg * i)
+        m[:3, 3] = [step * i, 0, 0]
+        name = f"frame_{i:05d}.jpg"
+        frames.append((name, 0.25 * i))
+        c2w[name] = m
+    return frames, c2w
+
+
+def test_check_poses_clean_walk_has_no_warnings():
+    from pipeline.sfm import check_poses
+
+    frames, c2w = walk_poses(60)
+    assert check_poses(frames, c2w, [60], "incremental") == []
+
+
+def test_check_poses_flags_jumps_stacks_flips_and_gaps():
+    from pipeline.sfm import check_poses
+
+    frames, c2w = walk_poses(60)
+    for i in range(20, 60):  # a jump of 20 steps between frames 19 and 20
+        c2w[frames[i][0]][:3, 3] += [2.0, 0, 0]
+    for i in range(31, 36):  # frames 30-35 on one spot while still turning
+        c2w[frames[i][0]][:3, 3] = c2w[frames[30][0]][:3, 3]
+    c2w[frames[45][0]][:3, :3] = rot([0, 1, 0], 180) @ c2w[frames[45][0]][:3, :3]  # flipped round
+    for i in range(50, 54):
+        del c2w[frames[i][0]]
+    w = " | ".join(check_poses(frames, c2w, [56, 4], "global"))
+    assert "split into 2 pieces" in w
+    assert "4 frames could not be placed" in w and "12.5-13.2 s" in w
+    assert "jumps" in w and "4.8-5.0 s" in w
+    assert "same spot" in w and "7.5-8.8 s" in w
+    assert "flips" in w
+    assert "try the incremental mapper" in w
+
+
+def test_check_poses_photos_skip_neighbour_checks():
+    from pipeline.sfm import check_poses
+
+    frames, c2w = walk_poses(30)
+    c2w[frames[10][0]][:3, 3] += [50.0, 0, 0]
+    photos = [(name, None) for name, _ in frames]  # photo order says nothing about where they were taken
+    assert check_poses(photos, c2w, [30], "incremental") == []
+    # a duplicate small model is fine when the model used has every frame
+    assert check_poses(photos, c2w, [30, 5], "incremental") == []
+
+
+def test_blur_warnings():
+    from pipeline.extract_frames import blur_warnings
+
+    def rows(sharpness):
+        return [(f"f{i}.jpg", "v.mp4", f"{0.25 * i:.4f}", f"{s:.1f}", 900, 1600) for i, s in enumerate(sharpness)]
+
+    sharp = [800.0] * 80
+    assert blur_warnings(rows(sharp)) == []
+    blurry = sharp[:]
+    blurry[40:48] = [100.0] * 8  # 10.0-11.75 s
+    blurry[20] = 100.0  # a single blurry frame is not worth a warning
+    (w,) = blur_warnings(rows(blurry))
+    assert "10.0-11.8 s" in w and "5.0" not in w
+    photos = [(n, s, "", sh, wd, h) for n, s, _, sh, wd, h in rows(blurry)]
+    assert blur_warnings(photos) == []

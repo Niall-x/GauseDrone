@@ -1,11 +1,27 @@
 import clsx from "clsx";
-import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Map as MapIcon, Route, Scissors, Video } from "lucide-react";
+import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Download, Home, Image as ImageIcon, Keyboard, Map as MapIcon, MousePointer2, Route, Scissors, Video } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { api } from "../api/client";
 import { ErrorBanner, Spinner } from "../components/ui";
 import { usePoll } from "../lib/hooks";
 import { SplatViewer, type SplatViewerHandle, type ViewInfo, type ViewerStats } from "../viewer/SplatViewer";
+
+// Mouse sensitivity is a per-browser preference, kept across runs and reloads.
+const SENSITIVITY_KEY = "viewer.sensitivity";
+type Sensitivity = { look: number; scroll: number };
+const DEFAULT_SENSITIVITY: Sensitivity = { look: 1, scroll: 1 };
+
+function loadSensitivity(): Sensitivity {
+  try {
+    const v = JSON.parse(localStorage.getItem(SENSITIVITY_KEY) ?? "null");
+    const ok = (x: unknown) => typeof x === "number" && x >= 0.1 && x <= 10;
+    if (v && ok(v.look) && ok(v.scroll)) return { look: v.look, scroll: v.scroll };
+  } catch {
+    // storage blocked or corrupt: fall back to defaults
+  }
+  return DEFAULT_SENSITIVITY;
+}
 
 export function ViewerPage() {
   const { runId = "" } = useParams();
@@ -22,6 +38,8 @@ export function ViewerPage() {
   const [showHelp, setShowHelp] = useState(false);
   const [camIndex, setCamIndex] = useState<number | null>(null);
   const [cutaway, setCutaway] = useState<number | null>(null);
+  const [showMouse, setShowMouse] = useState(false);
+  const [sensitivity, setSensitivity] = useState(loadSensitivity);
   const viewer = useRef<SplatViewerHandle>(null);
 
   useEffect(() => {
@@ -30,6 +48,14 @@ export function ViewerPage() {
       .then(setView)
       .catch((e) => setViewError(String(e.message ?? e)));
   }, [runId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SENSITIVITY_KEY, JSON.stringify(sensitivity));
+    } catch {
+      // not persisted; the setting still applies for this visit
+    }
+  }, [sensitivity]);
 
   const goTo = (i: number) => {
     if (!view) return;
@@ -83,6 +109,8 @@ export function ViewerPage() {
           showTrajectory={showTrajectory}
           showFrustums={showFrustums}
           cutaway={cutaway}
+          lookSensitivity={sensitivity.look}
+          scrollSensitivity={sensitivity.scroll}
           onProgress={setProgress}
           onLoaded={() => setLoaded(true)}
           onError={setLoadError}
@@ -140,29 +168,14 @@ export function ViewerPage() {
           <a href={api.file(runId, "export/splat.ply")} download={`${runId}.ply`} className="rounded-md p-2 text-muted hover:bg-panel-2 hover:text-fg" title="Download PLY">
             <Download className="size-4" />
           </a>
+          <ToolButton active={showMouse} onClick={() => setShowMouse((v) => !v)} title="Mouse sensitivity">
+            <MousePointer2 className="size-4" />
+          </ToolButton>
           <ToolButton active={showHelp} onClick={() => setShowHelp((v) => !v)} title="Controls (?)">
             <Keyboard className="size-4" />
           </ToolButton>
         </div>
       </div>
-
-      {cutaway != null && (
-        <div className="absolute right-3 top-16 flex items-center gap-3 rounded-lg border border-line bg-panel/85 px-3 py-2 text-xs text-muted backdrop-blur">
-          <Scissors className="size-3.5" />
-          <span>Cut height</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={cutaway}
-            onChange={(e) => setCutaway(Number(e.target.value))}
-            className="w-40 accent-[var(--color-accent)]"
-            aria-label="Cutaway height"
-          />
-          <span className="w-8 text-right font-mono">{Math.round(cutaway * 100)}%</span>
-        </div>
-      )}
 
       {/* loading */}
       {!loaded && !error && (
@@ -215,17 +228,55 @@ export function ViewerPage() {
         </div>
       )}
 
-      {showHelp && (
-        <div className="absolute right-3 top-28 w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
-          <h3 className="mb-2 text-sm font-semibold text-fg">Controls</h3>
-          <HelpRow k="Move">W A S D / arrows · E or Space up · Q or C down · Shift faster · scroll forward/back</HelpRow>
-          <HelpRow k="Mouse">drag look around · right-drag orbit · middle-drag pan · double-click a surface to orbit it</HelpRow>
-          <HelpRow k="[ ]">step through the capture cameras</HelpRow>
-          <HelpRow k="O">overview from above, with the capture path and a cutaway</HelpRow>
-          <HelpRow k="R">reset view</HelpRow>
-          <p className="mt-3 text-faint">"Up" is estimated from the capture cameras, so a scan filmed mostly tilted may appear slightly skewed.</p>
-        </div>
-      )}
+      {/* right-hand panels, stacked so they never overlap */}
+      <div className="pointer-events-none absolute right-3 top-16 flex flex-col items-end gap-2 [&>*]:pointer-events-auto">
+        {cutaway != null && (
+          <div className="flex items-center gap-3 rounded-lg border border-line bg-panel/85 px-3 py-2 text-xs text-muted backdrop-blur">
+            <Scissors className="size-3.5" />
+            <span>Cut height</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={cutaway}
+              onChange={(e) => setCutaway(Number(e.target.value))}
+              className="w-40 accent-[var(--color-accent)]"
+              aria-label="Cutaway height"
+            />
+            <span className="w-8 text-right font-mono">{Math.round(cutaway * 100)}%</span>
+          </div>
+        )}
+
+        {showMouse && (
+          <div className="w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-fg">Mouse sensitivity</h3>
+              <button
+                onClick={() => setSensitivity(DEFAULT_SENSITIVITY)}
+                disabled={sensitivity.look === 1 && sensitivity.scroll === 1}
+                className="rounded px-1.5 py-0.5 text-muted hover:bg-panel-2 hover:text-fg disabled:invisible"
+              >
+                Reset
+              </button>
+            </div>
+            <SensitivitySlider label="Look / orbit" value={sensitivity.look} onChange={(look) => setSensitivity((s) => ({ ...s, look }))} />
+            <SensitivitySlider label="Scroll" value={sensitivity.scroll} onChange={(scroll) => setSensitivity((s) => ({ ...s, scroll }))} />
+          </div>
+        )}
+
+        {showHelp && (
+          <div className="w-72 rounded-lg border border-line bg-panel/95 p-4 text-xs text-muted backdrop-blur">
+            <h3 className="mb-2 text-sm font-semibold text-fg">Controls</h3>
+            <HelpRow k="Move">W A S D / arrows · E or Space up · Q or C down · Shift faster · scroll forward/back</HelpRow>
+            <HelpRow k="Mouse">drag look around · right-drag orbit · middle-drag pan · double-click a surface to orbit it · sensitivity under the mouse-pointer button</HelpRow>
+            <HelpRow k="[ ]">step through the capture cameras</HelpRow>
+            <HelpRow k="O">overview from above, with the capture path and a cutaway</HelpRow>
+            <HelpRow k="R">reset view</HelpRow>
+            <p className="mt-3 text-faint">"Up" is estimated from the capture cameras, so a scan filmed mostly tilted may appear slightly skewed.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -235,6 +286,27 @@ function ToolButton({ active, children, ...rest }: { active?: boolean; children:
     <button {...rest} className={clsx("rounded-md p-2 transition-colors", active ? "bg-accent/15 text-accent" : "text-muted hover:bg-panel-2 hover:text-fg")}>
       {children}
     </button>
+  );
+}
+
+/** 0.25x-4x on a log scale, so each end is as far from 1x as the other. */
+function SensitivitySlider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="mb-2 flex items-center gap-3 last:mb-0">
+      <span className="w-20 shrink-0">{label}</span>
+      <input
+        type="range"
+        min={-2}
+        max={2}
+        step={0.05}
+        value={Math.log2(value)}
+        onChange={(e) => onChange(Math.round(2 ** Number(e.target.value) * 100) / 100)}
+        onDoubleClick={() => onChange(1)}
+        className="min-w-0 flex-1 accent-[var(--color-accent)]"
+        aria-label={`${label} sensitivity`}
+      />
+      <span className="w-10 text-right font-mono">{value.toFixed(2)}x</span>
+    </label>
   );
 }
 

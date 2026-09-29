@@ -48,7 +48,7 @@ python scripts/fetch_test_data.py          # Mip-NeRF 360 "room", 311 photos (~7
 ```
 
 Import `data/test/mipnerf360_room/images` on the Captures page. A Draft run
-with "Hold out every Nth frame" = 8 should give roughly 30–31 dB PSNR.
+(which holds out every 8th frame) should give roughly 30–31 dB held-out PSNR.
 
 ## Tests
 
@@ -62,7 +62,7 @@ Each stage is a CLI working on one run directory:
 
 ```sh
 R=data/dev/myscan
-python -m pipeline.extract_frames --run-dir $R --input path/to/video.mp4 --fps 2
+python -m pipeline.extract_frames --run-dir $R --input path/to/video.mp4 --fps 4
 python -m pipeline.sfm            --run-dir $R
 python -m pipeline.train          --run-dir $R --iterations 7000 --holdout-every 8
 python -m pipeline.export         --run-dir $R

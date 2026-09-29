@@ -94,9 +94,8 @@ This checks the whole setup before you film anything.
    the full path to `gaussian-scanning/data/test/mipnerf360_room/images`
    (e.g. `/home/you/GauseDrone/gaussian-scanning/data/test/mipnerf360_room/images`)
    and click **Import**.
-3. Click **Run** on the new capture, choose **Draft**, open *Advanced
-   settings* and set **Hold out every Nth frame** to `8` (so it reports a
-   quality score), then **Start run**.
+3. Click **Run** on the new capture, choose **Draft** (it holds out every 8th
+   frame, so it reports a quality score), then **Start run**.
 4. Watch the run page. Expect roughly: camera poses 4–5 min, training 3 min
    (plus ~2 min once, the very first time, while the GPU code compiles).
 5. Click **Open viewer**. A working setup scores about **30 dB** held-out PSNR
@@ -111,6 +110,9 @@ This checks the whole setup before you film anything.
 - Film **several loops at different heights** (high, chest height, low),
   always pointing the camera into the room, and end back where you started.
 - Keep plenty of **overlap**: never swing the camera quickly to a new spot.
+  Move gradually between room-scale views and close-ups.
+- **Walk**, don't just turn on the spot: SfM judges distance from how the view
+  shifts as the camera moves.
 - **Blank walls, mirrors, windows and shiny surfaces** confuse it; include
   furniture and texture in every shot.
 - Keep the scene **still** (no people or pets moving) and the lighting
@@ -126,7 +128,8 @@ This checks the whole setup before you film anything.
    **Resume upload** to continue where it stopped.) Tick *Link instead of
    copying* to avoid duplicating big files; the original must then stay where it is.
 3. **Run** → **Draft** → **Start run**. Default settings are a good start:
-   2 frames per second of video, images up to 1600 px.
+   4 frames per second of video, images up to 1600 px. Check the Frames and
+   Camera poses steps for amber warnings before trusting the result.
 4. Check the result in the viewer. If it looks right, get the full-quality
    version without redoing the slow camera-pose step: on the run page click
    **New run from this**, keep *Reuse up to Camera poses*, choose
@@ -147,6 +150,7 @@ This checks the whole setup before you film anything.
 | Scissors button | Ceiling cutaway on/off, with a height slider |
 | Camera button | Save a screenshot |
 | Download button | Download the splat as `.ply` (opens in SuperSplat, Blender add-ons, etc.) |
+| Mouse-pointer button | Mouse sensitivity: how far a drag turns the view and how far a scroll step moves (0.25x to 4x, remembered by the browser; double-click a slider to reset it) |
 | **R** | Reset the view |
 
 ### 7. When something goes wrong
@@ -155,7 +159,9 @@ This checks the whole setup before you film anything.
 |---|---|
 | `splat-app` says the address is in use | Something already uses port 8000, often the background service. `systemctl --user stop splat-app`, or run on another port with `splat-app --port 8001`. |
 | The service won't start | `journalctl --user -u splat-app -n 50` shows why. If you moved the project folder or changed how Nix is installed, rerun `bin/splat-app install-service`. |
-| "Camera poses" fails, or only some frames are posed | Too much blur, too little overlap or too many blank surfaces. Check the log (the **log** link on that step). Refilm more slowly; or in Advanced settings raise *Frames per second* to 3–4. |
+| "Camera poses" fails, or only some frames are posed | Too much blur, too little overlap or too many blank surfaces. Check the log (the **log** link on that step). Refilm more slowly; or in Advanced settings raise *Frames per second* (default 4) to 6. |
+| Amber warnings on the Frames or Camera poses step (a warning icon in the runs list) | The app checks the capture for long blurry or blank stretches, and the camera poses for jumps, flips and frames stacked on one spot. Each warning gives the times in the video. Poses flagged as wrong garble the splat even though the run says "done": if the run used the *global* mapper, re-run camera poses with *incremental*; otherwise raise *Frames per second* or refilm those moments more slowly. |
+| The splat is garbled (walls doubled, the room smeared or folded) | Wrong camera poses; check the Camera poses step for warnings, as above. Turning on the spot, filming out of a window, and quick swings to close-ups are the usual causes. |
 | The splat is blurry or full of floating blobs | Usually the capture: blur, too few viewpoints, or areas seen from only one side. The Standard preset helps a little; better filming helps a lot. |
 | Training fails with "out of memory" | Lower *Max image size* (e.g. 1200) in Advanced settings and re-run. |
 | The scene looks tilted in the viewer | "Up" is guessed from how the camera was held. Cosmetic only; the splat itself is fine. |

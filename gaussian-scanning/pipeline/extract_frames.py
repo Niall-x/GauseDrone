@@ -10,7 +10,9 @@ so it can later be matched to drone sensor logs.
 Photos: copied (resized if larger than --max-size), in name order.
 
 Writes <run>/frames/*.jpg and <run>/frames.csv (file_name, source,
-timestamp_sec, sharpness, width, height).
+timestamp_sec, sharpness, width, height). Stretches of video that are much less
+sharp than the rest are reported as `warnings` in the stage result: that is
+where SfM tends to lose track and the capture falls apart.
 """
 import argparse
 import csv
@@ -25,6 +27,12 @@ from pipeline.common import IMAGE_EXTS, VIDEO_EXTS, RunPaths, fresh_dir, progres
 
 SHARPNESS_SIZE = 640  # long side of the copy the blur score is measured on
 CANDIDATES_PER_BUCKET = 8  # frames scored per bucket; the rest are skipped undecoded
+# Blur warning: frames under this fraction of the median sharpness, merged when
+# less than MERGE_SEC apart, reported when the stretch lasts MIN_SEC or more.
+# On a handheld room video the stretch SfM could not place scored 13-35% of the median.
+BLUR_FRACTION = 0.35
+BLUR_MERGE_SEC = 1.5
+BLUR_MIN_SEC = 1.5
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -92,6 +100,28 @@ def from_video(video: Path, out: Path, fps: float, max_size: int) -> tuple[list,
     return rows, {"source_kind": "video", "video_fps": round(video_fps, 3), "source_size": size}
 
 
+def blur_warnings(rows: list) -> list[str]:
+    """Warnings for long stretches of video far less sharp than its median frame."""
+    if len(rows) < 10 or not all(r[2] for r in rows):
+        return []
+    sharp = np.array([float(r[3]) for r in rows])
+    times = np.array([float(r[2]) for r in rows])
+    median = float(np.median(sharp))
+    stretches: list[list[float]] = []
+    for t in times[sharp < BLUR_FRACTION * median]:
+        if stretches and t - stretches[-1][1] <= BLUR_MERGE_SEC:
+            stretches[-1][1] = t
+        else:
+            stretches.append([t, t])
+    long = [f"{a:.1f}-{b:.1f} s" for a, b in stretches if b - a >= BLUR_MIN_SEC]
+    if not long:
+        return []
+    return [
+        f"The video is much less sharp than usual at {', '.join(long)} (motion blur, or plain surfaces like a blank wall). "
+        "Camera poses often fail there: if the splat is broken around that part, refilm it more slowly."
+    ]
+
+
 def jpeg_orientation(path: Path) -> int:
     """EXIF orientation of a JPEG (1 = pixels stored upright), read from the header without decoding."""
     with open(path, "rb") as fh:
@@ -145,7 +175,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--input", type=Path, required=True, help="video file, or folder of photos")
-    p.add_argument("--fps", type=float, default=2.0, help="frames kept per second of video")
+    p.add_argument("--fps", type=float, default=4.0, help="frames kept per second of video")
     p.add_argument("--max-size", type=int, default=1600, help="longest image side in pixels (0 = keep)")
     p.add_argument(
         "--blur-reject",
@@ -172,6 +202,10 @@ def main() -> None:
     else:
         raise SystemExit(f"{src} is neither a video file nor a folder")
 
+    warnings = blur_warnings(rows)
+    for w in warnings:
+        print(f"WARNING: {w}")
+
     if args.blur_reject > 0 and rows:
         median = float(np.median([float(r[3]) for r in rows]))
         keep = [r for r in rows if float(r[3]) >= args.blur_reject * median]
@@ -195,7 +229,7 @@ def main() -> None:
 
     sizes = sorted({(int(r[4]), int(r[5])) for r in rows})
     progress(1.0, f"kept {len(rows)} frames")
-    result(num_frames=len(rows), frame_size=list(sizes[0]) if len(sizes) == 1 else [list(x) for x in sizes], **info)
+    result(num_frames=len(rows), frame_size=list(sizes[0]) if len(sizes) == 1 else [list(x) for x in sizes], **info, warnings=warnings)
 
 
 if __name__ == "__main__":

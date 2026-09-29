@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api, type Run, type StageConfig, type StageDef, type StageState } from "../api/client";
 import { LossChart } from "../components/LossChart";
 import { StageParams, configFrom } from "../components/StageParams";
-import { Button, Card, ErrorBanner, Field, PageHeader, ProgressBar, Select, Spinner, Stat, StatusBadge, StatusIcon } from "../components/ui";
+import { Button, Card, ErrorBanner, Field, PageHeader, ProgressBar, Select, Spinner, Stat, StatusBadge, StatusIcon, WarningList, stageWarnings } from "../components/ui";
 import { elapsed, formatDuration, formatNumber, timeAgo } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 
@@ -230,6 +230,7 @@ function StageRow({ run, stage, def }: { run: Run; stage: StageState; def?: Stag
       </div>
       {(running || (stage.status !== "done" && stage.progress > 0)) && <ProgressBar value={stage.progress} status={stage.status} className="ml-7 mt-2" />}
       {stage.error && <pre className="ml-7 mt-2 max-h-48 overflow-auto rounded border border-bad/30 bg-bad/5 p-2 font-mono text-[11px] leading-relaxed text-bad">{stage.error}</pre>}
+      {stage.status === "done" && <WarningList warnings={stageWarnings(stage)} className="ml-7 mt-2" />}
       {stage.status === "done" && resultEntries.length > 0 && (
         <div className="ml-7 mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-faint">
           {resultEntries.map(([k, v]) => (

@@ -1,4 +1,4 @@
-# Gaussian Splat Pipeline: Sub-Brief (v0.4)
+# Gaussian Splat Pipeline: Sub-Brief (v0.5)
 
 Status: M1 ("splat pipeline, no drone") from the main project brief is **built**: a pipeline plus a local app (Splat Lab) that runs it and views the result. See [`README.md`](README.md) to run it and [`app/BRIEF.md`](app/BRIEF.md) for the app's design. No drone sensor data is used yet.
 
@@ -10,7 +10,7 @@ Turning a set of photos or a walked/orbited video into a viewable Gaussian splat
 
 1. **Capture**: sequential, overlapping photos, or video, of the object/room. No stereo or depth sensor needed.
 2. **Frames**: from video, the sharpest frame in each 1/fps-second window is kept, with its real timestamp (needed later to match frames to drone logs).
-3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Feature extraction and matching run on the GPU; exhaustive matching for up to 400 frames (catches loop closures when a room scan returns to its start), then the global mapper (GLOMAP, now built into COLMAP; its bundle adjustment runs on the CPU), then undistortion to a pinhole camera.
+3. **Structure-from-Motion (SfM)**: COLMAP 4 works out where each image was shot from (camera poses) plus a sparse 3D point cloud, purely by matching visual features. Feature extraction and matching run on the GPU; exhaustive matching for up to 800 frames (catches loop closures when a room scan returns to its start; ~3 min of video at the default 4 fps), then the incremental mapper up to 800 frames and the global mapper (GLOMAP, now built into COLMAP) beyond (bundle adjustment runs on the CPU), then undistortion to a pinhole camera. Global mapping was the default until it proved unreliable on handheld phone video (section 3a). The poses are now sanity-checked (jumps, stacked frames, impossible turn rates, unplaced stretches, split models) and problems are shown as warnings on the run, as are long blurry or blank stretches of video.
 4. **Gaussian splat training**: gsplat fits hundreds of thousands of 3D Gaussians (position, size/orientation, opacity, colour) so that rendering them from each camera pose matches the photo. Standard 3DGS recipe: densification, L1 + SSIM loss, spherical harmonics up to degree 3. 7k iterations for a draft, 30k for full quality.
 5. **Export + viewer**: PLY (full precision) and SPZ (about 10x smaller) plus the camera path, opened in the app's own viewer.
 
@@ -23,6 +23,19 @@ Tooling decided: **COLMAP 4 + gsplat**, not nerfstudio (it pins old PyTorch and 
 - Sharp images: motion blur is the main enemy
 - A static scene: nothing moving between frames
 - Coverage from varied heights/angles, not one flat orbit
+
+### 3a. Findings from the first handheld scans (2026-09-29)
+
+Two phone videos (4K portrait, 30 fps) of one room: a 39 s turn on the spot, and a 77 s walk around the room with close-ups of the desk and chair and a view out of the patio doors. Both first came out garbled or noisy; the numbers are in [`app/BRIEF.md`](app/BRIEF.md) section 6.
+
+- **The global mapper (GLOMAP) was the main cause of garbled splats.** It reported every frame posed with sub-pixel reprojection error, but the poses were wrong: 11 frames stacked on one spot, 5–8-unit jumps between frames half a second apart, 168° flips. It places cameras from pairwise translation directions, which are noise when the baseline is a few centimetres (turning on the spot) or the features are at infinity (the garden through the window). The incremental mapper on the same matches: +5.3 dB held-out PSNR on the turn-on-the-spot video. It also fails honestly, splitting a capture into pieces instead of forcing unconnected parts together. **Now the default up to 800 frames.**
+- **2 fps is too sparse for handheld video.** On the walk, 2 fps left transitions (room view → close-up, fast turns) without enough overlap; 4 fps + incremental held together as one model (281/310 frames) and scored 22.9 dB against 19.6 dB for the old defaults. **Now 4 fps.**
+- **Unrecoverable stretches are blurry or blank.** The 60–68 s stretch (a quick pan over the chair, drawers and floor, at 13–35% of the median sharpness) could not be placed at 2 or 4 fps with either mapper. The software can only leave it out and say so; the fix is filming it more slowly.
+- **Blur rejection does not help.** A median-relative sharpness threshold cannot tell blur from a plain surface: at every threshold tried (0.2–0.5), over half the frames it dropped had been posed fine, including every view of a blank wall. Left off; the blur *warning* points at the stretches to refilm instead.
+- **Turning on the spot is a weak capture even with correct poses** (24 dB): little parallax means little depth information. Walk the room.
+- **Auto-exposure swings** when the camera faces a bright window, which training can't reconcile (floaters). Not addressed yet; per-image appearance compensation in training (gsplat supports it) is the likely fix, or exposure lock on the phone.
+
+Capture guidance that follows (also in the top-level README): walk slowly rather than turning on the spot; move gradually between room-scale views and close-ups; avoid quick sweeps over blank walls, doors and floor; don't film out of windows; keep the zoom fixed (a lens switch breaks the single-camera assumption).
 
 ## 4. Decision: camera-only now, staged sensor fusion later
 
@@ -56,7 +69,7 @@ Each run can hold out every Nth frame and report PSNR/SSIM on those unseen views
 | **Floaters** | Stray, wrong Gaussian blobs that appear in empty space in a finished splat, usually from bad geometry in low-texture or poorly-covered areas. |
 | **Gaussian** (as in "Gaussian splat") | A small, soft, blurry 3D blob (mathematically a 3D Gaussian distribution) used as the basic building block, instead of a mesh triangle or a solid point. |
 | **gsplat** | The open-source CUDA library that implements Gaussian splat rendering and training; the pipeline uses it directly (nerfstudio is a larger framework built on top of it, not used here). |
-| **GLOMAP / global mapper** | A faster way for SfM to solve all camera poses at once rather than adding images one by one; built into COLMAP 4. |
+| **GLOMAP / global mapper** | A faster way for SfM to solve all camera poses at once rather than adding images one by one; built into COLMAP 4. Less robust than incremental mapping on handheld video with little parallax. |
 | **SPZ** | A compressed splat file format (about 10x smaller than PLY) that the viewer loads. |
 | **IMU** (Inertial Measurement Unit) | A chip with accelerometers and gyroscopes that measures acceleration and rotation, used to estimate motion between frames. |
 | **Loop closure** | Recognising that a camera has returned to a place it's seen before, which lets a SLAM/VIO system correct drift that's built up since then. |

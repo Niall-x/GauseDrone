@@ -55,7 +55,7 @@ export function NewRunPage() {
   const capture = captures?.find((c) => c.id === captureId);
   const estimate = useMemo(() => {
     if (!capture) return null;
-    const fps = Number(config.frames?.fps ?? 2);
+    const fps = Number(config.frames?.fps ?? 4);
     const frames = capture.kind === "video" ? Math.round((capture.duration_sec ?? 0) * fps) : capture.num_images;
     return frames;
   }, [capture, config]);

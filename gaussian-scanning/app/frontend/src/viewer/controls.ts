@@ -25,6 +25,10 @@ export class ViewerControls {
   moveSpeed: number;
   /** Distance ahead of the camera that right-drag orbits around and scroll zooms towards. */
   focusDistance: number;
+  /** Multiplier on how far a mouse drag turns the view (look and orbit). */
+  lookSensitivity = 1;
+  /** Multiplier on how far one scroll step moves. */
+  scrollSensitivity = 1;
   enabled = true;
 
   private yaw = 0;
@@ -74,8 +78,9 @@ export class ViewerControls {
       const dy = e.clientY - d.y;
       d.x = e.clientX;
       d.y = e.clientY;
-      if (d.kind === "look") this.rotate(-dx * LOOK_RAD_PER_PX, -dy * LOOK_RAD_PER_PX);
-      else if (d.kind === "orbit") this.orbit(d.focus, -dx * LOOK_RAD_PER_PX, -dy * LOOK_RAD_PER_PX);
+      const k = LOOK_RAD_PER_PX * this.lookSensitivity;
+      if (d.kind === "look") this.rotate(-dx * k, -dy * k);
+      else if (d.kind === "orbit") this.orbit(d.focus, -dx * k, -dy * k);
       else this.pan(dx, dy, d.focus);
     });
     const endDrag = (e: PointerEvent) => {
@@ -91,7 +96,7 @@ export class ViewerControls {
         e.preventDefault();
         // Move towards the focus point, proportionally to how far it is: fast from afar, fine close up.
         const deltaPx = THREE.MathUtils.clamp(e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY, -200, 200); // Firefox scrolls in lines
-        const step = this.focusDistance * (1 - Math.exp(-deltaPx * 0.0015));
+        const step = this.focusDistance * (1 - Math.exp(-deltaPx * 0.0015 * this.scrollSensitivity));
         const forward = this.forward();
         this.camera.position.addScaledVector(forward, -step);
         this.focusDistance = Math.max(this.minFocus, this.focusDistance + step);

@@ -152,6 +152,26 @@ export function ErrorBanner({ error, className }: { error?: Error | string | nul
   );
 }
 
+/** Problems a stage reported in its result (`warnings`), e.g. unreliable camera poses. */
+export function stageWarnings(stage?: { result?: Record<string, unknown> | null }): string[] {
+  const w = stage?.result?.warnings;
+  return Array.isArray(w) ? w.filter((x): x is string => typeof x === "string") : [];
+}
+
+export function WarningList({ warnings, className }: { warnings: string[]; className?: string }) {
+  if (!warnings.length) return null;
+  return (
+    <ul className={clsx("space-y-1.5 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn", className)}>
+      {warnings.map((w) => (
+        <li key={w} className="flex items-start gap-2">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" />
+          <span>{w}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="min-w-0" title={hint}>

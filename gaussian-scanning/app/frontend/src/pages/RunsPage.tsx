@@ -1,8 +1,8 @@
-import { Box, Eye, Layers } from "lucide-react";
+import { AlertTriangle, Box, Eye, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, type Run } from "../api/client";
-import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner, StatusBadge } from "../components/ui";
+import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner, StatusBadge, stageWarnings } from "../components/ui";
 import { formatDuration, timeAgo } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 
@@ -59,12 +59,20 @@ export function RunsPage() {
                 const train = run.stages.find((s) => s.name === "train")?.result as Record<string, number> | undefined;
                 const sfm = run.stages.find((s) => s.name === "sfm")?.result as Record<string, number> | undefined;
                 const psnr = train?.test_psnr ?? train?.train_psnr;
+                const warnings = run.stages.flatMap((s) => (s.status === "done" ? stageWarnings(s) : []));
                 return (
                   <tr key={run.id} className="bg-bg transition-colors hover:bg-panel">
                     <td className="px-4 py-3">
-                      <Link to={`/runs/${run.id}`} className="block truncate font-medium hover:text-accent">
-                        {run.name}
-                      </Link>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Link to={`/runs/${run.id}`} className="truncate font-medium hover:text-accent">
+                          {run.name}
+                        </Link>
+                        {warnings.length > 0 && (
+                          <span title={warnings.join("\n\n")} className="shrink-0 text-warn">
+                            <AlertTriangle className="size-3.5" />
+                          </span>
+                        )}
+                      </div>
                       <div className="truncate text-xs text-faint">
                         {captureName(run.capture_id)} · {String(run.config.train?.iterations ?? "?")} it
                         {sfm?.registered_frames != null && ` · ${sfm.registered_frames}/${sfm.total_frames} frames posed`}

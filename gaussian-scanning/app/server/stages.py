@@ -41,7 +41,8 @@ STAGES: list[Stage] = [
         outputs=["frames", "frames.csv"],
         needs_input=True,
         params=[
-            Param("fps", "Frames per second", "float", 2.0, "Video only: frames kept per second of footage", min=0.1, max=30),
+            Param("fps", "Frames per second", "float", 4.0,
+                  "Video only: frames kept per second of footage. Fewer frames lose track at fast turns and blurry moments", min=0.1, max=30),
             Param("max-size", "Max image size (px)", "int", 1600, "Longest side after resizing (0 keeps full size)", min=0, max=8000),
             Param("blur-reject", "Blur rejection", "float", 0.0,
                   "Drop frames less sharp than this fraction of the median (0 = off). Low-texture views also score low, so use with care", min=0, max=1),
@@ -55,10 +56,11 @@ STAGES: list[Stage] = [
         outputs=["sfm"],
         params=[
             Param("matcher", "Matcher", "choice", "auto",
-                  "auto = exhaustive up to 400 frames (finds loop closures), sequential beyond",
+                  "auto = exhaustive up to 800 frames (finds loop closures), sequential beyond",
                   choices=["auto", "exhaustive", "sequential"]),
-            Param("mapper", "Mapper", "choice", "global",
-                  "global (GLOMAP) is fast; incremental is the slower classic fallback", choices=["global", "incremental"]),
+            Param("mapper", "Mapper", "choice", "auto",
+                  "auto = incremental up to 800 frames, global beyond. Global (GLOMAP) is faster on big captures but "
+                  "often gets handheld video wrong (turning on the spot, windows)", choices=["auto", "incremental", "global"]),
             Param("camera-model", "Camera model", "choice", "OPENCV", "Lens model COLMAP fits",
                   choices=["OPENCV", "SIMPLE_RADIAL", "PINHOLE", "OPENCV_FISHEYE"]),
             Param("single-camera", "Single camera", "choice", 1,
@@ -94,8 +96,8 @@ STAGES: list[Stage] = [
 STAGE_BY_NAME = {s.name: s for s in STAGES}
 
 PRESETS: dict[str, dict[str, Any]] = {
-    "draft": {"label": "Draft", "description": "7k iterations, a first look in a few minutes",
-              "config": {"train": {"iterations": 7000}}},
+    "draft": {"label": "Draft", "description": "7k iterations, a first look in a few minutes; every 8th frame held out for a quality score",
+              "config": {"train": {"iterations": 7000, "holdout-every": 8}}},
     "standard": {"label": "Standard", "description": "30k iterations, full quality",
                  "config": {"train": {"iterations": 30000}}},
 }

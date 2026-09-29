@@ -43,6 +43,9 @@ interface Props {
   showFrustums: boolean;
   /** Hide everything above this fraction of the scene's height (null = off), to see into a room from above. */
   cutaway: number | null;
+  /** Mouse drag (look/orbit) and scroll multipliers; 1 = default. */
+  lookSensitivity: number;
+  scrollSensitivity: number;
   onProgress?: (fraction: number | null) => void;
   onLoaded?: () => void;
   onError?: (message: string) => void;
@@ -56,7 +59,11 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
   const propsRef = useRef(props);
   propsRef.current = props;
   const api = useRef<
-    SplatViewerHandle & { setOverlays(t: boolean, f: boolean): void; setCutaway(f: number | null): void }
+    SplatViewerHandle & {
+      setOverlays(t: boolean, f: boolean): void;
+      setCutaway(f: number | null): void;
+      setSensitivity(look: number, scroll: number): void;
+    }
   >(null);
 
   useImperativeHandle(ref, () => ({
@@ -236,8 +243,13 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
         frustums.visible = f;
       },
       setCutaway,
+      setSensitivity: (look, scroll) => {
+        controls.lookSensitivity = look;
+        controls.scrollSensitivity = scroll;
+      },
     };
     setCutaway(propsRef.current.cutaway);
+    api.current.setSensitivity(propsRef.current.lookSensitivity, propsRef.current.scrollSensitivity);
     api.current.setOverlays(propsRef.current.showTrajectory, propsRef.current.showFrustums);
     resetView();
 
@@ -294,6 +306,10 @@ export const SplatViewer = forwardRef<SplatViewerHandle, Props>(function SplatVi
 
   useEffect(() => api.current?.setOverlays(props.showTrajectory, props.showFrustums), [props.showTrajectory, props.showFrustums]);
   useEffect(() => api.current?.setCutaway(props.cutaway), [props.cutaway]);
+  useEffect(
+    () => api.current?.setSensitivity(props.lookSensitivity, props.scrollSensitivity),
+    [props.lookSensitivity, props.scrollSensitivity],
+  );
 
   return <div ref={containerRef} className="absolute inset-0" />;
 });

@@ -98,12 +98,14 @@ If we stop after M6, we still have a complete result.
 
 ## 6a. Current state: M1 and Splat Lab
 
-- **Pipeline** (`gaussian-scanning/pipeline/`): frame extraction (sharpest frame per interval, real video timestamps) → COLMAP 4 camera poses (global mapper) → gsplat training → export (PLY, compressed SPZ, camera path). Design: [`gaussian-scanning/BRIEF.md`](gaussian-scanning/BRIEF.md).
+- **Pipeline** (`gaussian-scanning/pipeline/`): frame extraction (sharpest frame per interval, real video timestamps) → COLMAP 4 camera poses (incremental mapper; global for very large captures) with pose sanity checks → gsplat training → export (PLY, compressed SPZ, camera path). Design: [`gaussian-scanning/BRIEF.md`](gaussian-scanning/BRIEF.md).
 - **Splat Lab** (`gaussian-scanning/app/`): local web app that imports captures, runs and tracks the pipeline (progress, logs, cancel/resume, reuse of camera poses between runs, a reproducible record per run; uploads resume after a dropped connection) and includes a viewer with game-style WASD + mouse controls, the capture path, per-camera photo comparison and a top-down coverage view. Design: [`gaussian-scanning/app/BRIEF.md`](gaussian-scanning/app/BRIEF.md). **How to run it: [`README.md`](README.md).**
 - **Environment:** Nix flake + locked Python packages, so both of us get identical tool versions. Trains on an RTX 4070 Ti Super. The app runs as a systemd user service, switched on and off with `systemctl --user start|stop splat-app`, optionally started at boot. It's shared with the other person over Tailscale Serve (HTTPS on the tailnet; the app itself stays bound to localhost). Setup for all of this: [`README.md`](README.md).
 - **Tested** on the Mip-NeRF 360 "room" scene: 30.7 dB held-out PSNR in ~3 min end to end (Draft; ~7 min before GPU feature matching and a training speed fix), 32.1 dB at full quality, in line with published 3DGS results.
 
-What M1 still needs: **real handheld scans of our own rooms** and short notes on what capture technique works (the "notes on capture quality" deliverable). These feed straight into choosing the splat camera (open question 4) and the drone's flight speed.
+- **First handheld scans** (2026-09-29): two phone videos of one room. Both came out garbled at first. The cause was mostly software: the global mapper returned confidently wrong camera poses on low-parallax handheld video. Switching to the incremental mapper and 4 fps took held-out PSNR from 18.9 to 24.2 dB and from 19.6 to 22.9 dB. Defaults changed accordingly, and the app now warns about blurry stretches and implausible camera poses. Findings: [`gaussian-scanning/BRIEF.md`](gaussian-scanning/BRIEF.md) section 3a.
+
+What M1 still needs: **more real scans** (other rooms, and a slow walk-around following the new capture guidance, to see what a good handheld capture scores) and turning section 3a into the short "notes on capture quality" deliverable. These feed straight into choosing the splat camera (open question 4) and the drone's flight speed. The findings already point one way for the drone: steady, slow motion with real translation (not rotating in place), and care near windows.
 
 What later milestones need from the app (designed, not built; details in the app brief):
 - **M5:** import of the drone's rosbag (images + VIO poses), with the VIO poses used as priors for COLMAP.
